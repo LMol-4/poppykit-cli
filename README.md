@@ -2,6 +2,11 @@
 
 Command-line interface for personal-agent runtimes, built on the Poppy client SDK.
 
+An optional adapter for runtimes that execute commands, including the Codex demo.
+Products integrating the client SDK directly do not need this CLI. Protocol logic
+belongs in the client SDK; local demo startup and company-agent setup belong in
+[poppykit-demo](https://github.com/LMol-4/poppykit-demo).
+
 Status: initial project scaffold. No SDK or CLI implementation is published yet.
 
 Targets the Personal Agent Protocol (Poppy): https://personalagentprotocol.org/docs/spec
