@@ -44,3 +44,12 @@
 - Integration caveat sent to I: N default total timeout 15s must be overridden for 30s host long polls, e.g. transport 32s below 35s outer command deadline. No runtime/security implementation approval.
 - Own implementation remains 5326688; checkpoint bc9d3b9 preserved. Worktree clean before this record. No processes started or install attempted during resumed review.
 - Next: await Q revised host review and I shared-interface gate. Runtime still gated.
+
+## Frame/page revision checkpoint
+- Implementation SHA aa2cd9d: 8 MiB encoded host frame budget with serialization preflight, bounded oversized_result failure, no checkpoint advancement on undelivered pages, maximum structural depth 64.
+- ProtocolFailure carries validated extension/conversation_id recovery identifiers; challenges/nonces remain private.
+- Added successful full snake_case page with unknown event, narrow-null initial page and explicit new-user-message send fixtures. Fixtures total 8.
+- Documented H N transport timeout 32s for 30s long polls under 35s CLI deadline.
+- Validation at aa2cd9d content: integration TypeScript compiler command recorded above passed; fixture ConvertFrom-Json count check passed (8).
+- Dirty files: none after checkpoint. Running processes: none. No runtime implementation.
+- Next: N independent review aa2cd9d, then I final gate decision.
