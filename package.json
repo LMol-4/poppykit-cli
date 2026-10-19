@@ -30,6 +30,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./host-contract": {
+      "import": "./dist/host-contract.js",
+      "types": "./dist/host-contract.d.ts"
     }
   }
 }
