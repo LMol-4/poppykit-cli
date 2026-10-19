@@ -36,3 +36,11 @@
 - Local install: node scripts/pnpm.mjs install --offline --frozen-lockfile failed missing offline metadata. Following pnpm typecheck attempted dependency download, network EACCES; process 74667 stopped with Ctrl-C. Used existing integration compiler read-only instead.
 - Dirty/untracked: none after checkpoint commit; ignored partial node_modules may remain from attempted install.
 - Next: Q review 5326688 and I gate authorization; no runtime implementation yet.
+
+## Independent N proposal review
+- Reviewed immutable client SHA 3b16ab44f268cda065b48456fdfe19c9a87a56a5, docs/network-interface.md, for CLI/host consumption only.
+- No blocking findings; proposal approved within L consumer scope. Wire snake_case six-field page stays unchanged under result.page; pinned spec.mdx lines 1431-1433 confirm cursor semantics.
+- Domain discovery and no-vault/web-only behavior align with host discovery/connection.start. Abort means stop waiting, not remote work cancellation. SDK retains private headers, CLI excludes challenges/nonces.
+- Integration caveat sent to I: N default total timeout 15s must be overridden for 30s host long polls, e.g. transport 32s below 35s outer command deadline. No runtime/security implementation approval.
+- Own implementation remains 5326688; checkpoint bc9d3b9 preserved. Worktree clean before this record. No processes started or install attempted during resumed review.
+- Next: await Q revised host review and I shared-interface gate. Runtime still gated.
