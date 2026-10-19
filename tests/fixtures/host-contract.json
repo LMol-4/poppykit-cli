@@ -1,0 +1,230 @@
+[
+  {
+    "response": {
+      "status": "succeeded",
+      "operation": "discovery",
+      "requestId": "req-discovery",
+      "result": {
+        "issuer": "https://shop.poppy.test/issuer",
+        "domain": "shop.poppy.test"
+      },
+      "version": 1
+    },
+    "request": {
+      "params": {
+        "domain": "shop.poppy.test"
+      },
+      "operation": "discovery",
+      "requestId": "req-discovery",
+      "version": 1
+    }
+  },
+  {
+    "response": {
+      "status": "succeeded",
+      "operation": "connection.start",
+      "requestId": "req-connect",
+      "result": {
+        "state": "signed_out",
+        "connection": "connection-1"
+      },
+      "version": 1
+    },
+    "request": {
+      "params": {
+        "domain": "shop.poppy.test"
+      },
+      "operation": "connection.start",
+      "requestId": "req-connect",
+      "version": 1
+    }
+  },
+  {
+    "request": {
+      "version": 1,
+      "requestId": "req-1",
+      "operation": "login.start",
+      "params": {
+        "connection": "connection-1",
+        "scopes": [
+          "poppy:read"
+        ]
+      }
+    },
+    "response": {
+      "version": 1,
+      "requestId": "req-1",
+      "operation": "login.start",
+      "status": "pending",
+      "result": {
+        "operation": "login-1",
+        "state": "pending"
+      },
+      "nextAction": {
+        "type": "inspect_operation",
+        "operation": "login-1"
+      }
+    }
+  },
+  {
+    "request": {
+      "version": 1,
+      "requestId": "req-2",
+      "operation": "logout",
+      "params": {
+        "connection": "connection-1"
+      }
+    },
+    "response": {
+      "version": 1,
+      "requestId": "req-2",
+      "operation": "logout",
+      "status": "pending",
+      "result": {
+        "connection": "connection-1",
+        "operation": "revoke-1",
+        "state": "disconnected",
+        "revocation": "pending"
+      },
+      "nextAction": {
+        "type": "inspect_operation",
+        "operation": "revoke-1"
+      }
+    }
+  },
+  {
+    "request": {
+      "version": 1,
+      "requestId": "req-3",
+      "operation": "conversation.read",
+      "params": {
+        "connection": "connection-1",
+        "conversation": "conversation-1"
+      }
+    },
+    "response": {
+      "version": 1,
+      "requestId": "req-3",
+      "operation": "conversation.read",
+      "status": "failed",
+      "error": {
+        "category": "authorization_required",
+        "message": "Sign-in is required.",
+        "protocol": {
+          "status": 401,
+          "code": "sign_in_required"
+        }
+      },
+      "nextAction": {
+        "type": "sign_in"
+      }
+    }
+  },
+  {
+    "request": {
+      "version": 1,
+      "operation": "conversation.read",
+      "params": {
+        "connection": "connection-1",
+        "conversation": "conversation-1"
+      },
+      "requestId": "req-page"
+    },
+    "response": {
+      "version": 1,
+      "status": "succeeded",
+      "operation": "conversation.read",
+      "result": {
+        "page": {
+          "responder": "agent",
+          "status": "idle",
+          "has_more": false,
+          "events": [
+            {
+              "type": "future_event",
+              "extension_data": {
+                "safe": "opaque"
+              },
+              "created_at": "2026-10-19T17:00:00Z",
+              "id": "event-1"
+            }
+          ],
+          "cursor": "event-1",
+          "conversation_id": "conversation-1"
+        }
+      },
+      "requestId": "req-page"
+    }
+  },
+  {
+    "request": {
+      "version": 1,
+      "operation": "conversation.read",
+      "params": {
+        "connection": "connection-1",
+        "conversation": "conversation-1"
+      },
+      "requestId": "req-empty"
+    },
+    "response": {
+      "version": 1,
+      "status": "succeeded",
+      "operation": "conversation.read",
+      "result": {
+        "page": {
+          "responder": "agent",
+          "status": "idle",
+          "has_more": false,
+          "events": [],
+          "cursor": null,
+          "conversation_id": "conversation-1"
+        }
+      },
+      "requestId": "req-empty"
+    }
+  },
+  {
+    "request": {
+      "version": 1,
+      "operation": "conversation.send",
+      "params": {
+        "conversation": "conversation-1",
+        "connection": "connection-1",
+        "message": {
+          "text": "Please continue.",
+          "sender": "human",
+          "id": "message-1"
+        },
+        "sendOperation": "send-1"
+      },
+      "requestId": "req-send"
+    },
+    "response": {
+      "version": 1,
+      "status": "accepted",
+      "operation": "conversation.send",
+      "result": {
+        "conversation": "conversation-1",
+        "page": {
+          "responder": "agent",
+          "status": "idle",
+          "has_more": false,
+          "events": [
+            {
+              "type": "future_event",
+              "extension_data": {
+                "safe": "opaque"
+              },
+              "created_at": "2026-10-19T17:00:00Z",
+              "id": "event-1"
+            }
+          ],
+          "cursor": "event-1",
+          "conversation_id": "conversation-1"
+        },
+        "sendOperation": "send-1"
+      },
+      "requestId": "req-send"
+    }
+  }
+]
