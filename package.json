@@ -24,6 +24,7 @@
   },
   "files": [
     "dist",
+    "helpers",
     "README.md"
   ],
   "exports": {
@@ -35,5 +36,8 @@
       "import": "./dist/host-contract.js",
       "types": "./dist/host-contract.d.ts"
     }
+  },
+  "bin": {
+    "poppykit": "dist/cli.js"
   }
 }
