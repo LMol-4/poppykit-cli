@@ -26,3 +26,13 @@
 - Next step: I/H review e7d7816; receive interface gate approval from I before runtime implementation. Proposal SHA reported to I.
 - Inspect git status/log and this checkpoint before resuming. No pushes/publication.
 
+
+## Revised proposal checkpoint
+- Implementation SHA: 5326688; tooling c1abe14 merged under I authorization.
+- Added discovery(domain), connection.start(domain), mutually exclusive connection/domain login.start; fixtures now cover signed-out flow.
+- Documented explicit new conversation.send for resumption and private-only WWW-Authenticate/DPoP-Nonce retention.
+- Validation: node C:/code/poppy/.worktrees/integration/poppykit-cli/node_modules/typescript/bin/tsc --noEmit --typeRoots C:/code/poppy/.worktrees/integration/poppykit-cli/node_modules/@types passed (5326688 content).
+- Validation: Get-Content tests/fixtures/host-contract.json -Raw | ConvertFrom-Json | Measure-Object passed: 5 fixtures.
+- Local install: node scripts/pnpm.mjs install --offline --frozen-lockfile failed missing offline metadata. Following pnpm typecheck attempted dependency download, network EACCES; process 74667 stopped with Ctrl-C. Used existing integration compiler read-only instead.
+- Dirty/untracked: none after checkpoint commit; ignored partial node_modules may remain from attempted install.
+- Next: Q review 5326688 and I gate authorization; no runtime implementation yet.
