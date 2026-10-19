@@ -3,8 +3,10 @@ export type Json = null | boolean | number | string | Json[] | { [key: string]: 
 export type Message = { id: string; sender: 'human' | 'agent'; text?: string; data?: { [key: string]: Json }; context?: { [key: string]: Json } };
 export type Selection = { connection?: string };
 export type Operations = {
+  'discovery': { domain: string };
+  'connection.start': { domain: string };
   'connection.list': Record<string, never>;
-  'login.start': { issuer: string; scopes: string[]; replaceConnection?: string };
+  'login.start': { scopes: string[] } & ({ connection: string; domain?: never; replaceConnection?: never } | { domain: string; replaceConnection?: string; connection?: never });
   'login.status': { operation: string };
   'login.cancel': { operation: string };
   'logout': Selection;
@@ -32,3 +34,4 @@ export type HostResponse = {
   nextAction?: NextAction;
 };
 export type Profile = { name: string; pipe: string; connection?: string };
+

@@ -19,3 +19,13 @@ Success/accepted/pending has result and no error; failed has error (safe public 
 CLI emits exactly one response JSON value to stdout, including safe invocation/transport errors; stderr carries redacted diagnostics. Exit 0: succeeded/accepted/pending. Exit 1: operation failure, including uncertainty. Exit 2: invalid invocation. The local error representation uses the selected operation, or `connection.list` when parsing never identified one, and a generated requestId. Protocol HTTP status/error code/Retry-After remain separate in `error.protocol`; never put raw peer bodies or unsanitized error strings in diagnostics.
 
 Fixtures are independently implementable examples, not a runtime conformance claim. Remaining gate review: I/H acknowledge operations, framing, ACL provider, result field names and SDK page shape; R acknowledges send and acknowledgment semantics.
+
+## Revised signed-out and discovery boundary
+
+`discovery({domain})` returns validated public discovery metadata without constructing a session or requiring a vault. `connection.start({domain})` discovers services and creates a signed-out connection/session, returning the public `connection` handle. The host persists both selected service domain and exact full issuer on that connection. Discovery supports web-only domains; a conversation command on a domain without that capability returns unsupported_capability.
+
+`login.start` either takes an existing explicit `connection` plus scopes, or `domain` plus scopes and optional `replaceConnection` to stage a new connection. These forms are mutually exclusive. Issuer-only input is rejected: it loses service-domain discovery. Replacement activates only after successful sign-in/persistence and actual scope checks; failed replacement preserves the old connection. All follow-up operations select the resulting connection handle.
+
+After sign-in, explicit resumption is a new `conversation.send` containing a new user-authorized message. Login completion, progress inspection and conversation polling must never restart suspended company work. There is no protocol resume command.
+
+The SDK/host retain validated HTTP WWW-Authenticate and DPoP-Nonce headers privately for bounded authentication handling; they are not copied into command results or stderr. Public protocol failures expose only status, code and validated Retry-After. Raw challenge text and nonce values never enter CLI output or model context.
