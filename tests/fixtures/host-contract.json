@@ -119,5 +119,112 @@
         "type": "sign_in"
       }
     }
+  },
+  {
+    "request": {
+      "version": 1,
+      "operation": "conversation.read",
+      "params": {
+        "connection": "connection-1",
+        "conversation": "conversation-1"
+      },
+      "requestId": "req-page"
+    },
+    "response": {
+      "version": 1,
+      "status": "succeeded",
+      "operation": "conversation.read",
+      "result": {
+        "page": {
+          "responder": "agent",
+          "status": "idle",
+          "has_more": false,
+          "events": [
+            {
+              "type": "future_event",
+              "extension_data": {
+                "safe": "opaque"
+              },
+              "created_at": "2026-10-19T17:00:00Z",
+              "id": "event-1"
+            }
+          ],
+          "cursor": "event-1",
+          "conversation_id": "conversation-1"
+        }
+      },
+      "requestId": "req-page"
+    }
+  },
+  {
+    "request": {
+      "version": 1,
+      "operation": "conversation.read",
+      "params": {
+        "connection": "connection-1",
+        "conversation": "conversation-1"
+      },
+      "requestId": "req-empty"
+    },
+    "response": {
+      "version": 1,
+      "status": "succeeded",
+      "operation": "conversation.read",
+      "result": {
+        "page": {
+          "responder": "agent",
+          "status": "idle",
+          "has_more": false,
+          "events": [],
+          "cursor": null,
+          "conversation_id": "conversation-1"
+        }
+      },
+      "requestId": "req-empty"
+    }
+  },
+  {
+    "request": {
+      "version": 1,
+      "operation": "conversation.send",
+      "params": {
+        "conversation": "conversation-1",
+        "connection": "connection-1",
+        "message": {
+          "text": "Please continue.",
+          "sender": "human",
+          "id": "message-1"
+        },
+        "sendOperation": "send-1"
+      },
+      "requestId": "req-send"
+    },
+    "response": {
+      "version": 1,
+      "status": "accepted",
+      "operation": "conversation.send",
+      "result": {
+        "conversation": "conversation-1",
+        "page": {
+          "responder": "agent",
+          "status": "idle",
+          "has_more": false,
+          "events": [
+            {
+              "type": "future_event",
+              "extension_data": {
+                "safe": "opaque"
+              },
+              "created_at": "2026-10-19T17:00:00Z",
+              "id": "event-1"
+            }
+          ],
+          "cursor": "event-1",
+          "conversation_id": "conversation-1"
+        },
+        "sendOperation": "send-1"
+      },
+      "requestId": "req-send"
+    }
   }
 ]

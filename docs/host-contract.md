@@ -2,7 +2,7 @@
 
 The package subpath `@poppykit/cli/host-contract` exports `src/host-contract.ts` independently of the executable. No SDK or demo dependency is required. I owns export/build wiring.
 
-One UTF-8 JSON request and one JSON response per channel connection, each terminated by LF, maximum 1 MiB encoded frame. No progress stream: callers inspect durable operation handles using `operation.status` or `login.status`. Response version/requestId/operation must match. Unknown version produces `version_mismatch`; unknown operations/fields and invalid parameters produce `invalid_input`. No automatic transport retry of mutating commands. Connect timeout 5 seconds, request timeout 35 seconds, host waits capped at 30 seconds.
+One UTF-8 JSON request and one JSON response per channel connection, each terminated by LF, maximum 8 MiB encoded frame. No progress stream: callers inspect durable operation handles using `operation.status` or `login.status`. Response version/requestId/operation must match. Unknown version produces `version_mismatch`; unknown operations/fields and invalid parameters produce `invalid_input`. No automatic transport retry of mutating commands. Connect timeout 5 seconds, request timeout 35 seconds, host waits capped at 30 seconds.
 
 Only local Windows named pipes (`\\.\pipe\...`) are permitted. Profiles contain public configuration only. Host must restrict pipe ACL to the authenticated Windows user and SYSTEM and reject remote clients; user binding is derived from authenticated channel identity, never request parameters. Node's ordinary pipe listener alone does not prove ACL/peer identity; H/D must provide and test that protected server boundary. No unauthenticated TCP fallback. Another platform requires a separately reviewed protected local transport.
 
@@ -28,4 +28,11 @@ Fixtures are independently implementable examples, not a runtime conformance cla
 
 After sign-in, explicit resumption is a new `conversation.send` containing a new user-authorized message. Login completion, progress inspection and conversation polling must never restart suspended company work. There is no protocol resume command.
 
-The SDK/host retain validated HTTP WWW-Authenticate and DPoP-Nonce headers privately for bounded authentication handling; they are not copied into command results or stderr. Public protocol failures expose only status, code and validated Retry-After. Raw challenge text and nonce values never enter CLI output or model context.
+The SDK/host retain validated HTTP WWW-Authenticate and DPoP-Nonce headers privately for bounded authentication handling; they are not copied into command results or stderr. Public protocol failures expose status, code, validated Retry-After, and validated extension/conversation_id recovery identifiers. Raw challenge text and nonce values never enter CLI output or model context.
+
+
+## Frame and timeout integration
+
+The host validates encoded UTF-8 size after serialization and before writing any response bytes. The 8 MiB command frame budget accommodates JSON envelope overhead around N's maximum 1 MiB remote body. A response still exceeding the limit becomes a bounded failed response with category `oversized_result`, fixed safe text, and public operation/send handles when available. It is a recoverable local transport/output failure: it does not imply remote mutation failed. Do not advance a named consumer checkpoint or acknowledge a page that was not delivered. Inspection/retry retains the original send identity; use supported peer pagination controls only, never invent a Poppy page-size parameter. Both endpoints also bound JSON structural depth to 64 before recursive validation/processing; deeply nested input is invalid_input, excessive result nesting is oversized_result.
+
+H configures N transport total timeout to 32 seconds for host reads capped at 30 seconds, below the CLI outer request timeout of 35 seconds. Ordinary short requests can retain N's default 15 seconds. Host page values use exact wire snake_case fields, including unknown event properties; no reshaping into the earlier illustrative camelCase draft.

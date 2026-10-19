@@ -21,8 +21,8 @@ export type Operations = {
 };
 export type Operation = keyof Operations;
 export type HostRequest = { [K in Operation]: { version: 1; requestId: string; operation: K; params: Operations[K] } }[Operation];
-export type ErrorCategory = 'invalid_input' | 'unsupported_capability' | 'authorization_required' | 'permission_denied' | 'conflict' | 'history_gap' | 'transport_failure' | 'uncertain_outcome' | 'version_mismatch';
-export type ProtocolFailure = { status: number; code?: string; retryAfter?: string };
+export type ErrorCategory = 'invalid_input' | 'unsupported_capability' | 'authorization_required' | 'permission_denied' | 'conflict' | 'history_gap' | 'transport_failure' | 'uncertain_outcome' | 'version_mismatch' | 'oversized_result';
+export type ProtocolFailure = { status: number; code?: string; retryAfter?: string; extension?: string; conversation_id?: string };
 export type NextAction = { type: 'inspect_operation'; operation: string } | { type: 'sign_in' } | { type: 'select_connection'; connections: string[] } | { type: 'retry'; afterSeconds?: number };
 export type HostResponse = {
   version: 1;
@@ -34,4 +34,5 @@ export type HostResponse = {
   nextAction?: NextAction;
 };
 export type Profile = { name: string; pipe: string; connection?: string };
+
 
