@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { mkdtemp, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -34,6 +34,43 @@ const json = (r) => {
   assert.ok(r.stdout.endsWith('\n'));
   return JSON.parse(r.stdout);
 };
+
+test('help and --help work offline without reading or mutating state', async () => {
+  const absent = join(home, 'help-absent');
+  const existing = await mkdtemp(join(home, 'help-existing-'));
+  // Invalid config proves help does not need to read/parse profiles.
+  await writeFile(join(existing, 'profiles.json'), 'invalid configuration');
+  let usage;
+  for (const stateDir of [absent, existing]) {
+    for (const command of ['help', '--help']) {
+      const r = await run([command], { PATH: '' }, stateDir);
+      assert.equal(r.code, 0, r.stderr);
+      assert.equal(r.stderr, '');
+      assert.match(r.stdout, /^Usage: poppykit /);
+      assert.match(r.stdout, /discovery <domain>/);
+      assert.match(r.stdout, /start --send-operation <handle>/);
+      assert.match(r.stdout, /send --send-operation <handle>/);
+      assert.match(r.stdout, /direct --send-operation <handle>/);
+      assert.match(r.stdout, /status <send-operation>/);
+      if (usage) assert.equal(r.stdout, usage);
+      usage = r.stdout;
+    }
+  }
+  assert.equal(existsSync(absent), false);
+  assert.deepEqual(readdirSync(existing), ['profiles.json']);
+  assert.equal(readFileSync(join(existing, 'profiles.json'), 'utf8'), 'invalid configuration');
+});
+
+test('unknown commands and extra help arguments remain JSON invocation errors', async () => {
+  const absent = join(home, 'invalid-absent');
+  for (const args of [['discover'], ['discover', '--help'], ['help', 'send'], ['--help', '--profile', 'p']]) {
+    const r = await run(args, { PATH: '' }, absent);
+    assert.equal(r.code, 2);
+    assert.equal(json(r).error.category, 'invalid_input');
+    assert.equal(json(r).error.message, 'unknown command');
+  }
+  assert.equal(existsSync(absent), false);
+});
 
 // Fixture host. `reply(request, socket)` returns a string frame to send (LF appended) or handles the socket itself.
 async function host(reply) {
