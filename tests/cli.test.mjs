@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, symlink } from 'node:fs/promises';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -428,4 +428,17 @@ describe('no secrets in output', { skip: !win }, () => {
       assert.equal(r.stderr, 'poppykit: conversation.read transport_failure\n');
     });
   });
+});
+
+// npm and pnpm install bins as symlinks; the CLI must still run when launched through one.
+test('runs when launched through a symlinked bin', async (t) => {
+  const link = join(home, 'poppykit-bin.mjs');
+  try { await symlink(CLI, link); } catch (error) { if (error.code === 'EPERM') return t.skip('symlinks need developer mode'); throw error; }
+  const r = await new Promise((resolve) => {
+    const child = spawn(process.execPath, [link, 'connections'], { env: { ...process.env, POPPYKIT_HOME: home }, windowsHide: true });
+    let stdout = '';
+    child.stdout.on('data', (d) => (stdout += d));
+    child.on('close', () => resolve(stdout));
+  });
+  assert.equal(JSON.parse(r).operation, 'connection.list');
 });

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { randomUUID } from 'node:crypto';
+import { realpathSync } from 'node:fs';
 import { link, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -241,7 +242,8 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv): Promise<{ ou
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// realpath: an installed bin is a symlink, and Node's argv[1] keeps the link path while import.meta.url is the real one.
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   const { out, code } = await main(process.argv.slice(2), process.env);
   // Diagnostics carry only fixed text and the category, never peer strings or values.
   if (out.error) process.stderr.write(`poppykit: ${out.operation} ${out.error.category}${code === 2 ? `: ${out.error.message}` : ''}\n`);
