@@ -13,7 +13,23 @@ Profiles select hosts and connections; credentials stay in the host. Pending wor
 uncertain exchanges and incomplete remote revocation have explicit machine results.
 Remote host transports and hosted identity provisioning are outside the first scope.
 
-Status: initial project scaffold. No SDK or CLI implementation is published yet.
+Status: CLI implemented against the host contract (`docs/host-contract.md`); not published.
+
+## Usage
+
+`poppykit [profile add|list|remove] | <command> [--profile P] [--connection C]`. State lives in
+`%LOCALAPPDATA%poppykit-cli` (override: `POPPYKIT_HOME`): `profiles.json` (public config) and
+`sends/<handle>.json` (persisted send handles, written before the host is contacted).
+
+Commands: `discovery <domain>`, `connect <domain>`, `connections`, `login --scope S [--domain D [--replace C]]`,
+`status <op> [--login]`, `cancel <login-op>`, `logout`, `start|send <conv>|direct <conv>` with
+`--text/--data/--context/--human/--message-id/--send-operation/--wait`, `read <conv>`, `ack <conv>`,
+`handoff <conv>`, `close <conv>`. Retry a send with `send --send-operation <handle>`: IDs are reused.
+One JSON result on stdout; exit 0 succeeded/accepted/pending, 1 failed (including uncertain), 2 invalid invocation.
+
+The channel is a PowerShell 7 helper (`helpers/pipe-client.ps1`, mirrors the client rules in the demo's
+protected-channel doc): Identification impersonation level, server end must be owned by the current user.
+Windows with `pwsh` on PATH only.
 
 Targets the Personal Agent Protocol (Poppy): https://personalagentprotocol.org/docs/spec
 
