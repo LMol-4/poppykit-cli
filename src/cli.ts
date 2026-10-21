@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { exchange, MAX_FRAME, PIPE_RE } from './channel.js';
+import { HELP } from './help.js';
 import type { ErrorCategory, HostResponse, Json, Message, Operation, Profile } from './host-contract.js';
 
 class Usage extends Error {}
@@ -213,7 +214,8 @@ async function profileCommand(argv: string[], home: string): Promise<{ [k: strin
   return { profile: next as unknown as Json };
 }
 
-export async function main(argv: string[], env: NodeJS.ProcessEnv): Promise<{ out: HostResponse; code: number }> {
+export async function main(argv: string[], env: NodeJS.ProcessEnv): Promise<{ out: HostResponse | string; code: number }> {
+  if (argv.length === 1 && (argv[0] === 'help' || argv[0] === '--help')) return { out: HELP, code: 0 };
   const home = stateDir(env);
   const requestId = `req-${randomUUID()}`;
   const [cmd, ...rest] = argv;
@@ -246,6 +248,6 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv): Promise<{ ou
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   const { out, code } = await main(process.argv.slice(2), process.env);
   // Diagnostics carry only fixed text and the category, never peer strings or values.
-  if (out.error) process.stderr.write(`poppykit: ${out.operation} ${out.error.category}${code === 2 ? `: ${out.error.message}` : ''}\n`);
-  process.stdout.write(JSON.stringify(out) + '\n', () => process.exit(code));
+  if (typeof out !== 'string' && out.error) process.stderr.write(`poppykit: ${out.operation} ${out.error.category}${code === 2 ? `: ${out.error.message}` : ''}\n`);
+  process.stdout.write(typeof out === 'string' ? out : JSON.stringify(out) + '\n', () => process.exit(code));
 }
