@@ -16,6 +16,7 @@ class Local extends Error {
 const MAX_DEPTH = 64;
 const NAME_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const STATUSES = ['succeeded', 'accepted', 'pending', 'failed'];
+const CATEGORIES: ErrorCategory[] = ['invalid_input', 'unsupported_capability', 'authorization_required', 'permission_denied', 'conflict', 'history_gap', 'transport_failure', 'uncertain_outcome', 'version_mismatch', 'oversized_result'];
 const READ_ONLY: Operation[] = ['discovery', 'connection.list', 'login.status', 'operation.status', 'conversation.read'];
 
 // shortcut: state is plain per-user files under LOCALAPPDATA (user-private by default ACL); it holds public config only.
@@ -178,7 +179,7 @@ function validResponse(text: string, requestId: string, op: Operation): HostResp
   const obj = (x: unknown) => typeof x === 'object' && x !== null && !Array.isArray(x);
   if (!obj(r) || deep(r) || r.version !== 1 || r.requestId !== requestId || r.operation !== op || !STATUSES.includes(r.status)) return undefined;
   const ok = r.status === 'failed'
-    ? obj(r.error) && typeof r.error!.category === 'string' && typeof r.error!.message === 'string'
+    ? obj(r.error) && CATEGORIES.includes(r.error!.category) && typeof r.error!.message === 'string'
     : obj(r.result) && r.error === undefined;
   return ok ? r : undefined;
 }

@@ -418,4 +418,14 @@ describe('no secrets in output', { skip: !win }, () => {
       assert.equal(r.stderr, 'poppykit: conversation.read permission_denied\n');
     });
   });
+
+  test('error category outside the contract list is an invalid response', async () => {
+    await withHost(answer((q) => ({ version: 1, requestId: q.requestId, operation: q.operation, status: 'failed', error: { category: 'bogus', message: 'x' } })), async (_h, cli) => {
+      const r = await cli(['read', 'c1']);
+      assert.equal(r.code, 1);
+      assert.ok(!r.stdout.includes('bogus') && !r.stderr.includes('bogus'), 'unknown category reached output');
+      assert.equal(json(r).error.category, 'transport_failure');
+      assert.equal(r.stderr, 'poppykit: conversation.read transport_failure\n');
+    });
+  });
 });
