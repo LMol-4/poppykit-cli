@@ -2,7 +2,7 @@
   "name": "@poppykit/cli",
   "version": "0.0.0",
   "private": true,
-  "description": "PoppyKit cli for the Personal Agent Protocol; implementation pending",
+  "description": "Cross-platform Personal Agent Protocol CLI",
   "repository": {
     "type": "git",
     "url": "https://github.com/LMol-4/poppykit-cli.git"
@@ -24,20 +24,18 @@
   },
   "files": [
     "dist",
-    "helpers",
     "README.md"
   ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./host-contract": {
-      "import": "./dist/host-contract.js",
-      "types": "./dist/host-contract.d.ts"
     }
   },
   "bin": {
     "poppykit": "dist/cli.js"
+  },
+  "dependencies": {
+    "@poppykit/client": "0.0.0"
   }
 }
