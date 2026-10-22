@@ -1,4 +1,6 @@
-# Command host contract v1 (proposal awaiting I/H gate)
+# Command host contract v1 (current Windows implementation)
+
+> **Legacy execution model (2026-10-22).** This describes the current CLI channel, not the planned cross-platform architecture. Historical I/H/D ownership and approval gates below are obsolete. See the [README](../README.md) for current limitations and planned scope. J1 fixes immutable retry destination binding; J5 preserves it while replacing mandatory host/PowerShell execution with direct SDK use. Same-user pipe restrictions do not isolate authority from an unrestricted same-user harness.
 
 The package subpath `@poppykit/cli/host-contract` exports `src/host-contract.ts` independently of the executable. No SDK or demo dependency is required. I owns export/build wiring.
 

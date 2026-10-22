@@ -1,19 +1,32 @@
 # PoppyKit cli
 
-Command-line interface for personal-agent runtimes, built on the Poppy client SDK.
+Command-line interface for personal-agent runtimes. The current implementation
+talks to a configured host; the planned replacement calls the Poppy client SDK directly.
 
-An optional adapter for runtimes that execute commands, including the Codex demo.
-Products integrating the client SDK directly do not need this CLI. Protocol logic
-belongs in the client SDK; local demo startup and company-agent setup belong in
-[poppykit-demo](https://github.com/LMol-4/poppykit-demo).
+An optional adapter for runtimes that execute commands. Products integrating the
+client SDK directly do not need this CLI. Protocol logic belongs in the client
+SDK; company applications and demo workflows remain outside the CLI.
 
 The first CLI targets a configured local agent host through a versioned protected
-command channel. The demo companion is one implementation of that contract.
+command channel. The host implementation is supplied separately.
 Profiles select hosts and connections; credentials stay in the host. Pending work,
 uncertain exchanges and incomplete remote revocation have explicit machine results.
-Remote host transports and hosted identity provisioning are outside the first scope.
+This describes current functionality. The reviewed programme includes a
+cross-platform direct-SDK CLI, hosted identity enrollment, all three sign-in
+methods, and packaged Windows/macOS/Linux verification. Those capabilities are
+not yet implemented. No demo application is part of that programme.
 
 Status: CLI implemented against the host contract (`docs/host-contract.md`); not published.
+
+Known issue: saved sends do not enforce their original profile/host binding yet.
+Use the original unchanged profile and host when retrying; the planned J1 fix
+will reject destination changes before sending. Retained send files contain
+message bodies, not only public configuration.
+
+The planned security promise is secret redaction, scoped authority, and provider
+signing-key custody. A helper or encrypted local store does not isolate authority
+from an unrestricted same-user harness. Unattended headless use will require an
+explicit secure backend, with clear failure instead of plaintext fallback.
 
 ## Usage
 
@@ -39,14 +52,12 @@ The channel is a PowerShell 7 helper (`helpers/pipe-client.ps1`, mirrors the cli
 protected-channel doc): Identification impersonation level, server end must be owned by the current user.
 Windows with `pwsh` on PATH only.
 
-Targets the Personal Agent Protocol (Poppy): https://personalagentprotocol.org/docs/spec
+Targets the current [Personal Agent Protocol draft 0.2 specification](https://personalagentprotocol.org/docs/0.2/spec)
+and [guides](https://personalagentprotocol.org/docs/0.2/guides).
 
-Current design target (reviewed 2026-10-19): draft **0.2, in progress**, pinned to
-`30c476455c20c23c13b050c74c47d9b3269413c7`. The CLI must report unsupported pre-1.0
-versions explicitly and preserve user sign-out intent across commands: an
-authorization event or sign_in_required error must not silently reconnect a user
-who signed out or disconnected. If Device Sign-In is added, validate links before
-display and show the company name/domain.
+The October 19 source pin and Windows host design are historical baselines.
+Current online draft 0.2 sources govern protocol behavior. Existing usage above
+remains Windows-only until the planned implementation and platform checks pass.
 
 This is an independent implementation. Protocol conformance has not yet been tested.
 
