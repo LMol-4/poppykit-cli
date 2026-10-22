@@ -42,9 +42,9 @@ export async function hiddenInput(label: string): Promise<string> {
 }
 export const terminalTrustedInput: TrustedInput = {
   async collect(request) {
-    process.stderr.write(`Sign in to ${request.organization.domain}${request.challenge ? ' (challenge)' : ''}\n`);
+    process.stderr.write(`Sign in to ${JSON.stringify(request.organization.name).slice(0,256)} (${request.organization.domain})${request.challenge ? ' (challenge)' : ''}\n`);
     const input: Record<string, string> = {};
-    for (const field of request.fields) input[field.name] = await hiddenInput(`Field ${field.name.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64)}`);
+    for (const field of request.fields) input[field.name] = await hiddenInput(`Field ${JSON.stringify(field.label).slice(0,256)}`);
     return input;
   },
 };
