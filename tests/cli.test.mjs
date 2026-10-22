@@ -226,7 +226,7 @@ describe('commands', { skip: !win }, () => {
   test('no absolute pwsh.exe found: request is not sent', async () => {
     const { exchange } = await import('../dist/channel.js');
     const empty = await mkdtemp(join(home, 'empty-'));
-    const bogus = { Path: `.;relative;\\localhost\share;${empty}`, ProgramFiles: join(empty, 'none') };
+    const bogus = { Path: `.;relative;\\\\localhost\\share;${empty}`, ProgramFiles: join(empty, 'none') };
     assert.deepEqual(await exchange(String.raw`\\.\pipe\poppykit-cli-none`, '{}', bogus), { kind: 'not_sent' });
   });
 
