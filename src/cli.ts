@@ -179,7 +179,12 @@ async function build(cmd: string, argv: string[], home: string): Promise<Built> 
 }
 
 const obj = (x: unknown): x is { [k: string]: any } => typeof x === 'object' && x !== null && !Array.isArray(x);
-const reduceEvent = (e: unknown) => obj(e) && EVENT_TYPES.includes(e.type) ? e : obj(e) ? { id: e.id, type: e.type, created_at: e.created_at } : { type: null };
+const field = (v: unknown, re: RegExp) => (typeof v === 'string' && re.test(v) ? v : null);
+// Unrecognized events keep only validated id, type and created_at; failing fields become null.
+const reduceEvent = (e: unknown) => obj(e) && typeof e.type === 'string' && EVENT_TYPES.includes(e.type) ? e : {
+  id: field(obj(e) && e.id, ID_RE), type: field(obj(e) && e.type, /^[a-z0-9_.-]{1,64}$/),
+  created_at: field(obj(e) && e.created_at, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{1,9})?(Z|[+-]\d\d:\d\d)$/i),
+};
 
 // 'deep': excessive result nesting, which the host contract maps to oversized_result.
 function validResponse(text: string, requestId: string, op: Operation): HostResponse | 'deep' | undefined {

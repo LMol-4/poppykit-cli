@@ -10,11 +10,12 @@ export const PIPE_RE = /^\\\\\.\\pipe\\([A-Za-z0-9._-]{1,128})$/i;
 // not_sent: the request never reached the host. uncertain: it may have. oversized: response over the frame limit.
 export type Exchange = { kind: 'ok'; frame: string } | { kind: 'not_sent' | 'uncertain' | 'oversized' };
 
-// Windows searches the current directory for a bare name, so resolve pwsh.exe ourselves from absolute PATH entries only.
+// Windows searches the current directory for a bare name, so resolve pwsh.exe ourselves from absolute drive-letter PATH entries only.
 function findPwsh(env: NodeJS.ProcessEnv): string | undefined {
   const path = env[Object.keys(env).find((k) => k.toLowerCase() === 'path') ?? ''] ?? '';
-  const dirs = [...path.split(delimiter), ...(env.ProgramFiles ? [join(env.ProgramFiles, 'PowerShell', '7')] : [])];
-  return dirs.map((d) => join(d.replace(/^"|"$/g, ''), 'pwsh.exe')).find((f) => /^([a-z]:[\\/]|\\\\)/i.test(f) && existsSync(f));
+  // system install first, so a user-writable PATH directory cannot beat it
+  const dirs = [...(env.ProgramFiles ? [join(env.ProgramFiles, 'PowerShell', '7')] : []), ...path.split(delimiter)];
+  return dirs.map((d) => join(d.replace(/^"|"$/g, ''), 'pwsh.exe')).find((f) => /^[a-z]:[\\/]/i.test(f) && existsSync(f));
 }
 
 export function exchange(pipe: string, request: string, env: NodeJS.ProcessEnv = process.env): Promise<Exchange> {
