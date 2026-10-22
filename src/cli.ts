@@ -47,12 +47,22 @@ const publicProfile = (p: Profile) => ({ id: p.id, name: p.name, provider: p.pro
 function url(value: string): string { try { const u = new URL(value); if (u.protocol !== 'https:' || u.username || u.password || u.hash || u.search || /[\s\\]/.test(value)) fail('https_url_required'); return u.href; } catch { return fail('https_url_required'); } }
 function runtimeSupported(version: string): boolean { const [major, minor] = version.split('.').map(Number); return major > 24 || major === 24 && minor >= 12; }
 export { runtimeSupported };
+function cancelable(transport:HttpTransport,signal:AbortSignal):HttpTransport {
+  const call=(request:Request,options?:Parameters<HttpTransport['fetch']>[1],stream=false)=>new Promise<Response>((resolve,reject)=>{
+    const combined=AbortSignal.any([signal,request.signal]);combined.throwIfAborted();
+    const cancel=()=>reject(new DOMException('Canceled','AbortError'));combined.addEventListener('abort',cancel,{once:true});
+    const next=new Request(request,{signal:combined}),task=stream&&transport.stream?transport.stream(next):transport.fetch(next,options);
+    task.then(response=>{if(combined.aborted){void response.body?.cancel().catch(()=>{});cancel();}else resolve(response);},reject).finally(()=>combined.removeEventListener('abort',cancel));
+  });
+  return {fetch:call,...(transport.stream?{stream:(request:Request)=>call(request,undefined,true)}:{}),close:()=>transport.close?.()};
+}
 export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env, deps: Dependencies = {}): Promise<{ out: Reply | string; code: number }> {
   const command = argv[0] ?? 'help', requestId = randomUUID();
-  const reply = (result: any) => { const status = result?.outcome?.status ?? result?.status; return { out: { version: 1 as const, command, status: 'ok' as const, result: clean(result), requestId }, code: status === 'uncertain' ? 6 : ['denied','expired','failed'].includes(status) ? 3 : status === 'cancelled' ? 130 : 0 }; };
+  const reply = (result: any) => {if(abort.signal.aborted&&!boundedWatchComplete)throw new CliFailure('canceled',130); const status = result?.outcome?.status ?? result?.status; return { out: { version: 1 as const, command, status: 'ok' as const, result: clean(result), requestId }, code: status === 'uncertain' ? 6 : ['denied','expired','failed'].includes(status) ? 3 : status === 'cancelled' ? 130 : 0 }; };
   let state: State | undefined, backend: SecureBackend | undefined, transport: HttpTransport | undefined, authStore: any, conversationStore: any;
   let retryHandle:string|undefined;
-  const abort = new AbortController(), canceled = () => abort.abort();
+  let boundedWatchComplete=false;
+  const abort = new AbortController(), canceled = () => {boundedWatchComplete=false;abort.abort();};
   process.once('SIGINT', canceled); process.once('SIGTERM', canceled);
   try {
     if (!runtimeSupported(process.versions.node)) fail('node_24_12_or_newer_required', 1);
@@ -94,13 +104,13 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
     }
     if (command === 'status') { need(1); const row = state.get<any>('retry',pos[0]); if (!row || row.binding.profileId !== p.id) fail('unknown_retry'); return reply({ operation: pos[0], createdAt: row.createdAt, messageId: row.messageId, binding: row.binding }); }
     const sdk = deps.sdk ?? await import('@poppykit/client');
-    transport = deps.transport ?? sdk.createNodeTransport();
+    transport = cancelable(deps.transport ?? sdk.createNodeTransport(),abort.signal);
     let metadata = sdk.createMetadataResolver(transport);
     if (command === 'discovery') { need(0); const found = await metadata.resolveCompany(p.domain); return reply({ organization: found.document.organization, issuer: found.authorization?.issuer, authMethods: ['direct','device','mediated'].filter(method => !!found.document.auth?.[method]), apis: found.document.apis?.map(api => ({ type: api.type, url: api.url, resource: api.resource })), browser: !!found.document.web?.browser_session_endpoint, feedback: !!found.document.feedback }); }
     const config = state.get<{ module: string }>('config','backend');
     backend = deps.backend ?? await openBackend({ module: config?.module, unlock: v.unlock, directory: join(home, 'encrypted-secrets') });
     if (deps.backend) await backend.healthCheck();
-    if(backend.transport&&!deps.transport){transport.close?.();transport=backend.transport;metadata=sdk.createMetadataResolver(transport);}
+    if(backend.transport&&!deps.transport){transport.close?.();transport=cancelable(backend.transport,abort.signal);metadata=sdk.createMetadataResolver(transport);}
     if (command === 'enroll') {
       need(0); if (p.credentialRef) fail('already_enrolled',5);
       const headers = new Headers(await (backend.enrollmentAuth ? backend.enrollmentAuth({ url: p.provider, installationId: p.installationId }) : Promise.resolve({ authorization: `Bearer ${await hiddenInput('Operator enrollment credential')}` })));
@@ -162,15 +172,15 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       return reply(outcome);
     }
     if (command === 'api-target' || command === 'api-request') {
-      need(0); const api = auth as any, target = await api.apiTarget(connectionId, required('api'), str('destination'));
+      need(0); const target = await auth.apiTarget(connectionId, required('api'), str('destination'));
       if (command === 'api-target') return reply(target);
       const destination = required('destination'), method = str('method') ?? 'GET';
       if (!['GET','HEAD'].includes(method)) fail('api_request_read_methods_only');
-      const response = await api.apiFetch(connectionId,new Request(destination,{method,signal:abort.signal}),target,v.scope ?? []);
+      const response = await auth.apiFetch(connectionId,new Request(destination,{method,signal:abort.signal}),target,v.scope ?? []);
       await response.body?.cancel(); return reply({ status: response.status, target });
     }
-    if (command === 'browser-join') { need(0); if (!backend.browserController) fail('trusted_browser_controller_required',4); await (auth as any).joinBrowser(connectionId,required('return-to'),backend.browserController); return reply({ joined:true }); }
-    if (command === 'feedback') { need(0); await (auth as any).feedback(connectionId,{kind:'missing',task:required('task'),description:required('description')}); return reply({ accepted:true }); }
+    if (command === 'browser-join') { need(0); if (!backend.browserController) fail('trusted_browser_controller_required',4); await auth.joinBrowser(connectionId,required('return-to'),backend.browserController); return reply({ joined:true }); }
+    if (command === 'feedback') { need(0); await auth.feedback(connectionId,{kind:'missing',task:required('task'),description:required('description')}); return reply({ accepted:true }); }
     const target = await auth.target(connectionId);
     const binding = { profileId:p.id,provider:p.provider,installationId:p.installationId,enrollmentRef:p.credentialRef,connectionId,issuer:target.issuer,endpoint:target.endpoint,resource:target.resource ?? null };
     const bindConversation=(id:string)=>state!.atomic(()=>{const saved=state!.get('conversation',id);if(saved&&JSON.stringify(saved)!==JSON.stringify(binding))fail('conversation_binding_conflict',5);state!.put('conversation',id,binding);});
@@ -201,7 +211,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
     }
     if (command === 'read') { need(1);const page=await conversation.read(pos[0],{cursor:previous,signal:abort.signal});return reply({...page,delivery:delivery(page.cursor)}); }
     if (command === 'watch') {
-      need(1); const events:unknown[]=[];let cursor=previous,timedOut=false;const timer=setTimeout(()=>{timedOut=true;abort.abort();},30000);
+      need(1); const events:unknown[]=[];let cursor=previous,timedOut=false;const timer=setTimeout(()=>{timedOut=true;boundedWatchComplete=true;abort.abort();},30000);
       try { for await(const item of conversation.watch(pos[0],{cursor,signal:abort.signal,maxReconnects:0})) { events.push(item.event);cursor=item.event.id;if(events.length>=100)break; } }
       catch(error){if(!timedOut)throw error;}finally{clearTimeout(timer);}
       if(abort.signal.aborted&&!timedOut)fail('canceled',130);
@@ -211,7 +221,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
     return fail('unknown_command');
   } catch(error) {
     const known = error instanceof CliFailure, safe = error as { code?: string; retryAfterMs?: number };
-    if(safe.code==='renewal_pending'&&retryHandle)return reply({status:'pending',sendOperation:retryHandle,nextAction:'retry_after_live_auth_finishes'});
+    if(!abort.signal.aborted&&safe.code==='renewal_pending'&&retryHandle)return reply({status:'pending',sendOperation:retryHandle,nextAction:'retry_after_live_auth_finishes'});
     const authCodes = ['anonymous_unavailable','sign_in_required','insufficient_scope','invalid_scope','unsupported_method','direct_unavailable','device_unavailable','mediated_unavailable','trusted_input_required','provider_unavailable','disconnected','invalid_grant','rate_limited','secure_store_locked','secure_store_unavailable','unauthorized','expired','canceled','consumed','binding_conflict'];
     const sdkCode = safe.code && authCodes.includes(safe.code) ? safe.code : undefined;
     const code = abort.signal.aborted ? 'canceled' : known ? error.code : sdkCode ?? 'operation_failed';

@@ -26,7 +26,7 @@ async function fixture(){
   const run=async args=>main([...args,'--json'],{POPPYKIT_HOME:home},{backend,transport});
   const ok=async args=>{const result=await run(args);assert.equal(result.code,0,JSON.stringify(result.out));assert.equal(typeof result.out,'object');return result.out.result;};
   await ok(['setup','--provider','https://identity.example/v1','--company','company.example']);await ok(['enroll']);
-  return {home,backend,provider,run,ok,sent,secrets,setLoseSend:()=>loseSend=true,close:async()=>{store.close();await rm(home,{recursive:true,force:true});}};
+  return {home,backend,provider,transport,run,ok,sent,secrets,setLoseSend:()=>loseSend=true,close:async()=>{store.close();await rm(home,{recursive:true,force:true});}};
 }
 test('offline startup, runtime floor, stable JSON and no secure backend fallback',async()=>{
   assert.equal(runtimeSupported('24.11.9'),false);assert.equal(runtimeSupported('24.12.0'),true);assert.equal(runtimeSupported('25.0.0'),true);
@@ -88,5 +88,24 @@ test('separate processes concurrently create profiles without lost writes',async
     const run=n=>new Promise((resolve,reject)=>{const child=spawn(process.execPath,[cli.pathname.replace(/^\/(\w:)/,'$1'),'setup','--profile',n,'--provider','https://identity.example/v1','--company','company.example','--json'],{env:{...process.env,POPPYKIT_HOME:home},windowsHide:true});let out='',err='';child.stdout.on('data',d=>out+=d);child.stderr.on('data',d=>err+=d);child.on('error',reject);child.on('close',code=>resolve({code,out,err}));});
     const results=await Promise.all(['one','two','three'].map(run));for(const r of results)assert.equal(r.code,0,r.err+r.out);const state=new State(join(home,'cli.sqlite'));assert.equal(state.list('profile').length,3);state.close();
   }finally{await rm(home,{recursive:true,force:true});}
+});
+test('invocation cancellation fences a late Direct token response and retains uncertainty',async()=>{
+  const f=await fixture();let release;try{
+    await f.ok(['connect']);const started=await f.ok(['auth-start','--method','direct','--scope','poppy:read']);
+    const u=new URL(callbackUrl);u.searchParams.set('state',new URL(started.authorizationUrl).searchParams.get('state'));u.searchParams.set('iss',issuer);u.searchParams.set('code','PRIVATE_CODE');f.provider.callback(u.href);
+    const original=f.transport.fetch;let reached;const ready=new Promise(r=>reached=r),gate=new Promise(r=>release=r);
+    f.transport.fetch=async req=>{if(new URL(req.url).pathname==='/token'&&(await req.clone().text()).includes('authorization_code')){reached();await gate;}return original(req);};
+    const pending=f.run(['auth-continue',started.outcome.operationId]);await ready;process.emit('SIGTERM');const canceled=await pending;assert.equal(canceled.code,130);assert.equal(canceled.out.error.code,'canceled');release();await new Promise(r=>setTimeout(r,20));
+    const status=await f.run(['auth-status',started.outcome.operationId]);assert.equal(status.code,6);assert.equal(status.out.result.status,'uncertain');assert.equal(status.out.result.connection.status,'signed_out');
+  }finally{release?.();await f.close();}
+});
+test('watch preserves stream delegation, returns cursor, and signals cancel instead of success',async()=>{
+  const f=await fixture();try{
+    await f.ok(['connect']);await f.ok(['start','--text','generic']);let streams=0;
+    f.transport.stream=async()=>{streams++;return Response.json({conversation_id:'conversation1',status:'closed',responder:'agent',events:[{id:'event1',type:'state',created_at:new Date().toISOString(),status:'closed',responder:'agent'}],cursor:'event1',has_more:false});};
+    const watched=await f.ok(['watch','conversation1']);assert.equal(streams,1);assert.equal(watched.cursor,'event1');
+    let reached;const ready=new Promise(r=>reached=r);f.transport.stream=async()=>{reached();return new Promise(()=>{});};
+    const watching=f.run(['watch','conversation1']);await ready;process.emit('SIGINT');const canceled=await watching;assert.equal(canceled.code,130);assert.equal(canceled.out.status,'error');
+  }finally{await f.close();}
 });
 

@@ -2,7 +2,7 @@ import { randomBytes, scryptSync, createCipheriv, createDecipheriv, randomUUID }
 import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
 import { join, isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { SecretStore, TrustedInput, IdentitySigner, HttpTransport } from '@poppykit/client';
+import type { SecretStore, TrustedInput, IdentitySigner, HttpTransport, AgentBrowserController } from '@poppykit/client';
 
 export class CliFailure extends Error {
   constructor(readonly code: string, readonly exitCode = 1) { super(code); }
@@ -17,7 +17,7 @@ export interface SecureBackend {
   identity?: IdentitySigner;
   /** Trusted operator transport; must preserve SDK HTTPS/address/redirect/credential policy. */
   transport?: HttpTransport;
-  browserController?: { kind: 'agent-controlled'; postForm(input: { url: string; fields: Record<string, string> }): Promise<void> };
+  browserController?: AgentBrowserController;
   close?(): Promise<void> | void;
 }
 export async function hiddenInput(label: string): Promise<string> {
