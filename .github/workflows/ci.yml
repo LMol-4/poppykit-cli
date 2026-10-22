@@ -13,18 +13,71 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
-    name: Build, types and unit tests
-    runs-on: windows-latest
+  candidate:
+    name: Build and test exact CLI/client candidates
+    runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      clientCommit: ${{ steps.client.outputs.ref }}
     steps:
       - uses: actions/checkout@v4
+      - id: client
+        run: node -e "const c=require('./.github/client-candidate.json');const fs=require('node:fs');fs.appendFileSync(process.env.GITHUB_OUTPUT,'repository='+c.repository+'\nref='+c.ref+'\n')"
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.client.outputs.repository }}
+          ref: ${{ steps.client.outputs.ref }}
+          path: .candidate/client
       - uses: pnpm/action-setup@v4
+        with:
+          version: '11.25.0'
       - uses: actions/setup-node@v4
         with:
           node-version: '24.12.0'
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
-      - run: pnpm build
-      - run: pnpm test
+          cache-dependency-path: .candidate/client/pnpm-lock.yaml
+      - run: test "$(git -C .candidate/client rev-parse HEAD)" = '${{ steps.client.outputs.ref }}'
+      - run: pnpm --dir .candidate/client install --frozen-lockfile
+      - run: pnpm --dir .candidate/client build
+      - run: mkdir -p .candidate/artifacts && npm pack ./.candidate/client --ignore-scripts --pack-destination .candidate/artifacts
+      - run: npm install --ignore-scripts --no-save --no-package-lock --no-audit --no-fund ./.candidate/artifacts/poppykit-client-0.0.0.tgz typescript@5.9.3 @types/node@24.10.0 undici-types@7.16.0
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
+      - run: npm pack --ignore-scripts --pack-destination .candidate/artifacts
+      - run: node scripts/candidate-manifest.mjs write .candidate/artifacts/manifest.json .candidate/artifacts/poppykit-client-0.0.0.tgz .candidate/artifacts/poppykit-cli-0.0.0.tgz
+        env:
+          POPPYKIT_CLIENT_COMMIT: ${{ steps.client.outputs.ref }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packaged-candidates
+          path: .candidate/artifacts/*
+          if-no-files-found: error
+  packaged:
+    name: Packaged ${{ matrix.os }}
+    needs: candidate
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      POPPYKIT_CLIENT_COMMIT: ${{ needs.candidate.outputs.clientCommit }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.12.0'
+      - uses: actions/download-artifact@v4
+        with:
+          name: packaged-candidates
+          path: .candidate/artifacts
+      - run: node scripts/candidate-manifest.mjs check .candidate/artifacts/manifest.json .candidate/artifacts/poppykit-client-0.0.0.tgz .candidate/artifacts/poppykit-cli-0.0.0.tgz
+      - run: node -e "const fs=require('node:fs');fs.mkdirSync('.candidate/clean install ü',{recursive:true});fs.writeFileSync('.candidate/clean install ü/package.json',JSON.stringify({name:'poppy-packaged-check',private:true,type:'module'}))"
+      - run: npm install --prefix ".candidate/clean install ü" --ignore-scripts --no-package-lock --no-audit --no-fund ./.candidate/artifacts/poppykit-client-0.0.0.tgz ./.candidate/artifacts/poppykit-cli-0.0.0.tgz
+      - run: node scripts/packaged-check.mjs ".candidate/clean install ü"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.17.1'
+      - run: node scripts/unsupported-runtime.mjs ".candidate/clean install ü"
