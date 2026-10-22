@@ -99,7 +99,7 @@ async function host(reply) {
 const ok = (request, extra = {}) => ({ version: 1, requestId: request.requestId, operation: request.operation, status: 'succeeded', result: { echoed: true }, ...extra });
 const answer = (fn) => (request) => JSON.stringify(fn(request));
 
-async function withHost(reply, body, profile = {}) {
+async function withHost(reply, body, profile = { connection: 'c1' }) {
   const h = await host(reply);
   const dir = await mkdtemp(join(home, 'case-'));
   try {
@@ -329,7 +329,7 @@ describe('transport failures never succeed and are never replayed', { skip: !win
   test('no host listening: request not sent, transport_failure with the send handle', async () => {
     const dir = await mkdtemp(join(home, 'case-'));
     await run(['profile', 'add', 'p', '--pipe', `\\\\.\\pipe\\poppykit-cli-absent-${randomUUID()}`], {}, dir);
-    const r = await run(['send', 'conv-1', '--text', 'hi'], { POPPYKIT_CONNECT_TIMEOUT_MS: '500' }, dir);
+    const r = await run(['send', 'conv-1', '--text', 'hi', '--connection', 'c1'], { POPPYKIT_CONNECT_TIMEOUT_MS: '500' }, dir);
     assert.equal(r.code, 1);
     const out = json(r);
     assert.equal(out.error.category, 'transport_failure');
@@ -361,6 +361,40 @@ describe('transport failures never succeed and are never replayed', { skip: !win
 });
 
 describe('send handles', { skip: !win }, () => {
+  test('retry rejects changed hosts, connections and unbound records before dispatch', async () => {
+    const other = await host(answer(ok));
+    try {
+      await withHost(answer(ok), async (h, cli, dir) => {
+        assert.equal((await cli(['start', '--text', 'private message', '--send-operation', 'bound'])).code, 0);
+        const file = join(dir, 'sends', 'bound.json');
+        const saved = JSON.parse(readFileSync(file, 'utf8'));
+        assert.equal(saved.pipe, h.pipe);
+        assert.equal(saved.connection, 'c1');
+        for (const profile of [
+          { name: 'p', pipe: other.pipe, connection: 'c1' },
+          { name: 'p', pipe: h.pipe, connection: 'c2' },
+        ]) {
+          await writeFile(join(dir, 'profiles.json'), JSON.stringify([profile]));
+          assert.equal(json(await cli(['start', '--send-operation', 'bound'])).error.category, 'conflict');
+        }
+        await writeFile(join(dir, 'profiles.json'), JSON.stringify([{ name: 'p', pipe: h.pipe, connection: 'c1' }]));
+        delete saved.pipe;
+        await writeFile(file, JSON.stringify(saved));
+        assert.equal(json(await cli(['start', '--send-operation', 'bound'])).error.category, 'conflict');
+        assert.equal(h.requests.length, 1);
+        assert.equal(other.requests.length, 0);
+      });
+    } finally { await other.close(); }
+  });
+
+  test('new sends require an explicit connection before persisting or sending', async () => {
+    await withHost(answer(ok), async (h, cli, dir) => {
+      assert.equal((await cli(['start', '--text', 'x'])).code, 2);
+      assert.equal(existsSync(join(dir, 'sends')), false);
+      assert.equal(h.requests.length, 0);
+    }, {});
+  });
+
   test('saved before the host is contacted', async () => {
     let dirRef;
     const seen = [];
@@ -392,7 +426,7 @@ describe('send handles', { skip: !win }, () => {
       const again = await cli(['send', 'conv-1', '--text', 'hello', '--connection', 'c9', '--send-operation', handle]);
       assert.equal(again.code, 0);
       assert.equal(h.requests[2].params.message.id, x.params.message.id);
-    });
+    }, { connection: 'c9' });
   });
 
   test('reusing a handle with changed content, target or command is a conflict and sends nothing', async () => {
@@ -526,3 +560,4 @@ test('runs when launched through a symlinked bin', async (t) => {
   });
   assert.equal(JSON.parse(r).operation, 'connection.list');
 });
+

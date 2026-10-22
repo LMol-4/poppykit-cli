@@ -54,7 +54,7 @@ async function createExclusive(file: string, data: unknown): Promise<boolean> {
   } finally { await unlink(tmp).catch(() => {}); }
 }
 
-type SendRecord = { operation: Operation; connection?: string; conversation?: string; cursor?: string; message: Message };
+type SendRecord = { operation: Operation; pipe: string; connection: string; conversation?: string; cursor?: string; message: Message };
 
 const SEND_OPS: Record<string, Operation> = { start: 'conversation.start', send: 'conversation.send', direct: 'conversation.direct' };
 const MSG_OPTS = { text: { type: 'string' }, data: { type: 'string' }, context: { type: 'string' }, human: { type: 'boolean' }, 'message-id': { type: 'string' }, 'send-operation': { type: 'string' }, wait: { type: 'string' } } as const;
@@ -159,6 +159,9 @@ async function build(cmd: string, argv: string[], home: string): Promise<Built> 
     const saved = await readJson<SendRecord>(file(handle));
     if (!saved) throw new Usage('unknown send operation');
     if (saved.operation !== sendOp) throw new Local('conflict', 'send operation belongs to a different command', handle);
+    if (saved.pipe !== profile.pipe || !saved.connection || (connection !== undefined && saved.connection !== connection)) {
+      throw new Local('conflict', 'send operation destination differs or is unbound', handle);
+    }
     return { op: sendOp, profile, sendOperation: handle, params: sendParams(saved, handle, w) };
   }
   if (o.text === undefined && o.data === undefined && o.context === undefined) throw new Usage('a message needs --text, --data or --context');
@@ -166,7 +169,8 @@ async function build(cmd: string, argv: string[], home: string): Promise<Built> 
     id: str('message-id') ?? `msg-${randomUUID()}`, sender: o.human ? 'human' : 'agent',
     ...(str('text') !== undefined ? { text: str('text') } : {}), ...jsonObject('data', str('data')), ...jsonObject('context', str('context')),
   };
-  let rec: SendRecord = { operation: sendOp, ...(connection ? { connection } : {}), ...(pos[0] ? { conversation: pos[0] } : {}), ...(str('cursor') ? { cursor: str('cursor') } : {}), message };
+  if (!connection) throw new Usage('message commands need --connection or a profile connection');
+  let rec: SendRecord = { operation: sendOp, pipe: profile.pipe, connection, ...(pos[0] ? { conversation: pos[0] } : {}), ...(str('cursor') ? { cursor: str('cursor') } : {}), message };
   const id = handle ?? `send-${randomUUID()}`;
   await mkdir(join(home, 'sends'), { recursive: true });
   if (!(await createExclusive(file(id), rec))) {
