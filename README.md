@@ -18,10 +18,14 @@ not yet implemented. No demo application is part of that programme.
 
 Status: CLI implemented against the host contract (`docs/host-contract.md`); not published.
 
-Known issue: saved sends do not enforce their original profile/host binding yet.
-Use the original unchanged profile and host when retrying; the planned J1 fix
-will reject destination changes before sending. Retained send files contain
-message bodies, not only public configuration.
+Saved sends bind their original host pipe and connection. Retries reject changed
+destinations before sending; old unbound records fail closed. See
+[the host contract](docs/host-contract.md) for inspect/reset guidance. Retained send
+files contain message bodies, not only public configuration.
+
+Node 24.12.0 or later is required. Minimal CI runs build, type and unit checks on
+Windows because the current host channel uses Windows pipes. J5 owns the direct-SDK
+rewrite and packaged Windows/macOS/Linux evidence; those checks are not yet supplied.
 
 The planned security promise is secret redaction, scoped authority, and provider
 signing-key custody. A helper or encrypted local store does not isolate authority

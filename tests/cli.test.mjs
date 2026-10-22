@@ -560,4 +560,3 @@ test('runs when launched through a symlinked bin', async (t) => {
   });
   assert.equal(JSON.parse(r).operation, 'connection.list');
 });
-
