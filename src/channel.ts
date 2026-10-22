@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const MAX_FRAME = 8 * 1024 * 1024; // bytes including the LF
@@ -8,6 +10,14 @@ export const PIPE_RE = /^\\\\\.\\pipe\\([A-Za-z0-9._-]{1,128})$/i;
 // not_sent: the request never reached the host. uncertain: it may have. oversized: response over the frame limit.
 export type Exchange = { kind: 'ok'; frame: string } | { kind: 'not_sent' | 'uncertain' | 'oversized' };
 
+// Windows searches the current directory for a bare name, so resolve pwsh.exe ourselves from absolute drive-letter PATH entries only.
+function findPwsh(env: NodeJS.ProcessEnv): string | undefined {
+  const path = env[Object.keys(env).find((k) => k.toLowerCase() === 'path') ?? ''] ?? '';
+  // system install first, so a user-writable PATH directory cannot beat it
+  const dirs = [...(env.ProgramFiles ? [join(env.ProgramFiles, 'PowerShell', '7')] : []), ...path.split(delimiter)];
+  return dirs.map((d) => join(d.replace(/^"|"$/g, ''), 'pwsh.exe')).find((f) => /^[a-z]:[\\/]/i.test(f) && existsSync(f));
+}
+
 export function exchange(pipe: string, request: string, env: NodeJS.ProcessEnv = process.env): Promise<Exchange> {
   const name = PIPE_RE.exec(pipe)?.[1];
   const bytes = Buffer.from(request + '\n', 'utf8');
@@ -15,8 +25,10 @@ export function exchange(pipe: string, request: string, env: NodeJS.ProcessEnv =
   // Timeout overrides exist for tests; the contract values are 5 s connect, 35 s request.
   const connectMs = Number(env.POPPYKIT_CONNECT_TIMEOUT_MS) || 5_000;
   const requestMs = Number(env.POPPYKIT_REQUEST_TIMEOUT_MS) || 35_000;
+  const pwsh = findPwsh(env);
+  if (!pwsh) return Promise.resolve({ kind: 'not_sent' });
   return new Promise((resolve) => {
-    const child = spawn('pwsh', ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', HELPER, name, String(connectMs), String(requestMs)],
+    const child = spawn(pwsh, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', HELPER, name, String(connectMs), String(requestMs)],
       { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
     const chunks: Buffer[] = [];
     let size = 0;

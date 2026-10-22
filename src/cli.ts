@@ -16,6 +16,9 @@ class Local extends Error {
 }
 
 const MAX_DEPTH = 64;
+const ID_RE = /^[A-Za-z0-9_-]{1,256}$/; // Poppy IDs (spec 7.2)
+// Event types a Personal Agent recognizes (spec 7.5); anything else is reduced before it can reach a model.
+const EVENT_TYPES = ['message', 'state', 'authorization', 'user_requested', 'direct_opened', 'direct_closed'];
 const NAME_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const STATUSES = ['succeeded', 'accepted', 'pending', 'failed'];
 const CATEGORIES: ErrorCategory[] = ['invalid_input', 'unsupported_capability', 'authorization_required', 'permission_denied', 'conflict', 'history_gap', 'transport_failure', 'uncertain_outcome', 'version_mismatch', 'oversized_result'];
@@ -147,10 +150,10 @@ async function build(cmd: string, argv: string[], home: string): Promise<Built> 
   // Message commands: persist the send handle and message before contacting the host.
   const handle = str('send-operation');
   if (handle !== undefined && !NAME_RE.test(handle)) throw new Usage('--send-operation must match [A-Za-z0-9._-]{1,128}');
-  if (str('message-id') !== undefined && !NAME_RE.test(str('message-id')!)) throw new Usage('--message-id must match [A-Za-z0-9._-]{1,128}');
+  if (str('message-id') !== undefined && !ID_RE.test(str('message-id')!)) throw new Usage('--message-id must match [A-Za-z0-9_-]{1,256}');
   const w = wait(str('wait'));
   const file = (h: string) => join(home, 'sends', `${h}.json`);
-  const retryOnly = handle !== undefined && pos.length === 0 && ['text', 'data', 'context', 'message-id', 'cursor', 'connection'].every((k) => o[k] === undefined);
+  const retryOnly = handle !== undefined && pos.length === 0 && ['text', 'data', 'context', 'message-id', 'cursor', 'connection', 'human'].every((k) => o[k] === undefined);
   if (!retryOnly) need(cmd === 'start' ? 0 : 1);
   if (retryOnly) {
     const saved = await readJson<SendRecord>(file(handle));
@@ -175,14 +178,25 @@ async function build(cmd: string, argv: string[], home: string): Promise<Built> 
   return { op: sendOp, profile, sendOperation: id, params: sendParams(rec, id, w) };
 }
 
-function validResponse(text: string, requestId: string, op: Operation): HostResponse | undefined {
+const obj = (x: unknown): x is { [k: string]: any } => typeof x === 'object' && x !== null && !Array.isArray(x);
+const field = (v: unknown, re: RegExp) => (typeof v === 'string' && re.test(v) ? v : null);
+// Unrecognized events keep only validated id, type and created_at; failing fields become null.
+const reduceEvent = (e: unknown) => obj(e) && typeof e.type === 'string' && EVENT_TYPES.includes(e.type) ? e : {
+  id: field(obj(e) && e.id, ID_RE), type: field(obj(e) && e.type, /^[a-z0-9_.-]{1,64}$/),
+  created_at: field(obj(e) && e.created_at, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{1,9})?(Z|[+-]\d\d:\d\d)$/i),
+};
+
+// 'deep': excessive result nesting, which the host contract maps to oversized_result.
+function validResponse(text: string, requestId: string, op: Operation): HostResponse | 'deep' | undefined {
   let r: HostResponse;
   try { r = JSON.parse(text); } catch { return undefined; }
-  const obj = (x: unknown) => typeof x === 'object' && x !== null && !Array.isArray(x);
-  if (!obj(r) || deep(r) || r.version !== 1 || r.requestId !== requestId || r.operation !== op || !STATUSES.includes(r.status)) return undefined;
+  if (deep(r)) return 'deep';
+  if (!obj(r) || r.version !== 1 || r.requestId !== requestId || r.operation !== op || !STATUSES.includes(r.status)) return undefined;
   const ok = r.status === 'failed'
     ? obj(r.error) && CATEGORIES.includes(r.error!.category) && typeof r.error!.message === 'string'
     : obj(r.result) && r.error === undefined;
+  const page: { [k: string]: any } | undefined = obj(r.result) && obj(r.result.page) ? r.result.page : undefined;
+  if (ok && Array.isArray(page?.events)) page!.events = page!.events.map(reduceEvent);
   return ok ? r : undefined;
 }
 
@@ -235,6 +249,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv): Promise<{ ou
     if (ex.kind === 'oversized') return { out: failed(op, requestId, 'oversized_result', 'host response exceeded the frame limit', sendOperation), code: 1 };
     if (ex.kind !== 'ok') return { out: failed(op, requestId, unknown, 'no complete response from host; outcome unknown, do not assume success', sendOperation), code: 1 };
     const r = validResponse(ex.frame, requestId, op);
+    if (r === 'deep') return { out: failed(op, requestId, 'oversized_result', 'host response nesting exceeded the limit', sendOperation), code: 1 };
     if (!r) return { out: failed(op, requestId, unknown, 'host response was invalid; outcome unknown', sendOperation), code: 1 };
     return { out: r, code: r.status === 'failed' ? 1 : 0 };
   } catch (e) {

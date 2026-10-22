@@ -24,12 +24,12 @@ retain JSON output. Command-specific help and the `discover` alias are not suppo
 use `discovery <domain>`.
 
 `poppykit [profile add|list|remove] | <command> [--profile P] [--connection C]`. State lives in
-`%LOCALAPPDATA%poppykit-cli` (override: `POPPYKIT_HOME`): `profiles.json` (public config) and
+`%LOCALAPPDATA%\poppykit-cli` (override: `POPPYKIT_HOME`): `profiles.json` (public config) and
 `sends/<handle>.json` (persisted send handles, written before the host is contacted).
 
-Commands: `discovery <domain>`, `connect <domain>`, `connections`, `login --scope S [--domain D [--replace C]]`,
-`status <op> [--login]`, `cancel <login-op>`, `logout`, `start|send <conv>|direct <conv>` with
-`--text/--data/--context/--human/--message-id/--send-operation/--wait`, `read <conv>`, `ack <conv>`,
+Commands: `discovery <domain>`, `connect <domain>`, `connections`, `login --scope S [--connection C | --domain D [--replace C]]`,
+`status <op> [--login]`, `cancel <login-op>`, `logout [--connection C]`, `start|send <conv>|direct <conv>` with
+`--text/--data/--context/--human/--message-id/--send-operation/--wait`, `read <conv> [--cursor C] [--wait N] [--consumer NAME]`, `ack <conv> --consumer NAME --cursor C`,
 `handoff <conv>`, `close <conv>`. Inspect uncertain sends with `status <handle>`;
 retry using the original `start`, `send` or `direct` command with only
 `--send-operation <handle>` and the original profile (optionally `--wait`): saved IDs/content/target are reused.
