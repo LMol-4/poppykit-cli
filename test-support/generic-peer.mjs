@@ -22,7 +22,7 @@ export function createFakeCompany({ name = 'shop', jwks, clientId, now, issuerPa
     domain, issuer, tokenEndpoint, endpoint, authorizationEndpoint, codes: new Map(), grants: new Map(),
     behavior: { requireNonce: false, rotateNonceEveryTime: false, tokenOverride: null, tokenError: null, resourceHandler: null, rotate: true, revokeStatus: 200 },
     revocations: [],
-    requests: [], assertions: [], proofs: [],
+    requests: [], assertions: [], proofs: [], secrets: new Set(),
     sessions: new Map(), tokens: new Map(), seenAssertionJti: new Set(), seenProofJti: new Set(), nonce: null,
     devices: new Map(), challenges: new Map(), signInBehavior: { status: 'approved', scopes: directScopes, account: 'acct_1', code: '123456', codeRequired: false, attempts: 0 },
   };
@@ -207,6 +207,10 @@ export function createFakeCompany({ name = 'shop', jwks, clientId, now, issuerPa
   company.handle = async (request, options) => {
     const url = new URL(request.url);
     company.requests.push({ url: request.url, method: request.method, mode: options?.mode, authorization: request.headers.get('authorization') });
+    const proof=request.headers.get('dpop');if(proof)company.secrets.add(proof);
+    if(request.headers.get('content-type')?.startsWith('application/x-www-form-urlencoded')){
+      const form=new URLSearchParams(await request.clone().text());for(const name of ['client_assertion','assertion','code','device_code','refresh_token','code_verifier'])if(form.get(name))company.secrets.add(form.get(name));
+    }
     try {
       if (url.href === `https://${domain}/.well-known/poppy.json`) return json(200, { protocol_version: '0.2', organization: { name, domain }, auth: { issuer, [method]: { scopes: directScopes, ...(method === 'mediated' ? { endpoint: `${issuer}/sign-in`, fields: [{ name: 'password', label: 'Password', secret: true }] } : {}) } }, agent: { protocols: [{ type: 'other', endpoint: `https://api.${domain}/other` }, { type: 'poppy', endpoint, ...(conversationResource ? { resource: conversationResource } : {}) }] } });
       if (url.href === `https://auth.${domain}/.well-known/oauth-authorization-server${issuerPath}`) return json(200, { issuer, token_endpoint: tokenEndpoint, revocation_endpoint: `${issuer}/revoke`, ...(method === 'direct' ? { authorization_endpoint: authorizationEndpoint } : {}), ...(method === 'device' ? { device_authorization_endpoint: `${issuer}/device` } : {}), poppy_domains: [domain] });

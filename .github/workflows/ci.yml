@@ -14,11 +14,12 @@ concurrency:
 
 jobs:
   candidate:
-    name: Build and test exact CLI/client candidates
+    name: Build and test exact SDK/CLI candidates
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
       clientCommit: ${{ steps.client.outputs.ref }}
+      serverCommit: ${{ steps.server.outputs.ref }}
     steps:
       - uses: actions/checkout@v4
       - id: client
@@ -28,6 +29,13 @@ jobs:
           repository: ${{ steps.client.outputs.repository }}
           ref: ${{ steps.client.outputs.ref }}
           path: .candidate/client
+      - id: server
+        run: node -e "const c=require('./.github/server-candidate.json');const fs=require('node:fs');fs.appendFileSync(process.env.GITHUB_OUTPUT,'repository='+c.repository+'\nref='+c.ref+'\n')"
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.server.outputs.repository }}
+          ref: ${{ steps.server.outputs.ref }}
+          path: .candidate/server
       - uses: pnpm/action-setup@v4
         with:
           version: '11.25.0'
@@ -37,17 +45,26 @@ jobs:
           cache: pnpm
           cache-dependency-path: .candidate/client/pnpm-lock.yaml
       - run: test "$(git -C .candidate/client rev-parse HEAD)" = '${{ steps.client.outputs.ref }}'
+      - run: test "$(git -C .candidate/server rev-parse HEAD)" = '${{ steps.server.outputs.ref }}'
       - run: pnpm --dir .candidate/client install --frozen-lockfile
+      - run: pnpm --dir .candidate/client typecheck
       - run: pnpm --dir .candidate/client build
+      - run: pnpm --dir .candidate/client test
+      - run: pnpm --dir .candidate/server install --frozen-lockfile
+      - run: pnpm --dir .candidate/server typecheck
+      - run: pnpm --dir .candidate/server build
+      - run: pnpm --dir .candidate/server test
       - run: mkdir -p .candidate/artifacts && npm pack ./.candidate/client --ignore-scripts --pack-destination .candidate/artifacts
+      - run: npm pack ./.candidate/server --ignore-scripts --pack-destination .candidate/artifacts
       - run: npm install --ignore-scripts --no-save --no-package-lock --no-audit --no-fund ./.candidate/artifacts/poppykit-client-0.0.0.tgz typescript@5.9.3 @types/node@24.10.0 undici-types@7.16.0
       - run: npm run typecheck
       - run: npm run build
       - run: npm test
       - run: npm pack --ignore-scripts --pack-destination .candidate/artifacts
-      - run: node scripts/candidate-manifest.mjs write .candidate/artifacts/manifest.json .candidate/artifacts/poppykit-client-0.0.0.tgz .candidate/artifacts/poppykit-cli-0.0.0.tgz
+      - run: node scripts/candidate-manifest.mjs write .candidate/artifacts/manifest.json .candidate/artifacts/poppykit-client-0.0.0.tgz .candidate/artifacts/poppykit-server-0.0.0.tgz .candidate/artifacts/poppykit-cli-0.0.0.tgz
         env:
           POPPYKIT_CLIENT_COMMIT: ${{ steps.client.outputs.ref }}
+          POPPYKIT_SERVER_COMMIT: ${{ steps.server.outputs.ref }}
       - uses: actions/upload-artifact@v4
         with:
           name: packaged-candidates
@@ -64,6 +81,7 @@ jobs:
     timeout-minutes: 15
     env:
       POPPYKIT_CLIENT_COMMIT: ${{ needs.candidate.outputs.clientCommit }}
+      POPPYKIT_SERVER_COMMIT: ${{ needs.candidate.outputs.serverCommit }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -73,10 +91,15 @@ jobs:
         with:
           name: packaged-candidates
           path: .candidate/artifacts
-      - run: node scripts/candidate-manifest.mjs check .candidate/artifacts/manifest.json .candidate/artifacts/poppykit-client-0.0.0.tgz .candidate/artifacts/poppykit-cli-0.0.0.tgz
+      - run: node scripts/candidate-manifest.mjs check .candidate/artifacts/manifest.json .candidate/artifacts/poppykit-client-0.0.0.tgz .candidate/artifacts/poppykit-server-0.0.0.tgz .candidate/artifacts/poppykit-cli-0.0.0.tgz
       - run: node -e "const fs=require('node:fs');fs.mkdirSync('.candidate/clean install ü',{recursive:true});fs.writeFileSync('.candidate/clean install ü/package.json',JSON.stringify({name:'poppy-packaged-check',private:true,type:'module'}))"
-      - run: npm install --prefix ".candidate/clean install ü" --ignore-scripts --no-package-lock --no-audit --no-fund ./.candidate/artifacts/poppykit-client-0.0.0.tgz ./.candidate/artifacts/poppykit-cli-0.0.0.tgz
+      - run: npm install --prefix ".candidate/clean install ü" --ignore-scripts --no-package-lock --no-audit --no-fund ./.candidate/artifacts/poppykit-client-0.0.0.tgz ./.candidate/artifacts/poppykit-server-0.0.0.tgz ./.candidate/artifacts/poppykit-cli-0.0.0.tgz
+      - run: npm install --prefix ".candidate/type tools" --ignore-scripts --no-package-lock --no-audit --no-fund typescript@5.9.3 @types/node@24.10.0
+      - run: node scripts/packaged-contracts.mjs ".candidate/clean install ü" ".candidate/type tools/node_modules/typescript/bin/tsc" ".candidate/type tools/node_modules/@types"
+      - run: node scripts/packaged-server-check.mjs ".candidate/clean install ü"
       - run: node scripts/packaged-check.mjs ".candidate/clean install ü"
+        env:
+          POPPYKIT_TEST_PROVIDER_ORIGIN: https://operator-secondary.example
       - uses: actions/setup-node@v4
         with:
           node-version: '22.17.1'
