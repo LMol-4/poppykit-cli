@@ -7,6 +7,8 @@ import { CliFailure, type SecureBackend } from './secrets.js';
 const helper = String.raw`
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+[Console]::InputEncoding = New-Object Text.UTF8Encoding($false)
+[Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
 try {
   Add-Type -AssemblyName System.Security
   $r = [Console]::In.ReadToEnd() | ConvertFrom-Json
