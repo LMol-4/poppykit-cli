@@ -131,9 +131,9 @@ try{
     const name=i===1?'device':'mediated',p=['--profile',name];await ok(['setup',...p,'--provider',providerUrl,'--company',companies[i].domain]);await ok(['enroll',...p]);await ok(['connect',...p]);assert.equal((await run(['read','conversation1',...p])).code,5,'profile/company cannot inherit a conversation binding');const methods=await ok(['scopes',...p,'--scope','poppy:read']);assert.deepEqual(methods.methods.map(row=>row.method),[name]);const started=await ok(['auth-start',...p,'--method',name,'--scope','poppy:read']);assert.equal(started.outcome.status,'pending');if(name==='device')await new Promise(r=>setTimeout(r,5100));const done=await ok(['auth-continue',started.outcome.operationId,...p]);assert.equal(done.status,'completed');await ok(['sign-out',...p]);
   }
   await ok(['setup','--profile','browser','--provider',providerUrl,'--enrollment',providerOrigin+'/enrollment','--company',companies[0].domain]);
-  const browserStart=await ok(['enroll','--profile','browser']);assert.ok(browserStart.browserUrl);
+  const browserStart=await ok(['enroll','--profile','browser']);assert.ok(browserStart.toJSON().browserUrl);
   assert.equal((await ok(['enroll-status','--profile','browser'])).status,'pending');
-  browserApproved=true;assert.equal((await ok(['enroll-status','--profile','browser'])).enrolled,true);
+  browserApproved=true;assert.equal((await ok(['enroll-status','--profile','browser'])).toJSON().enrolled,true);
   await ok(['connect','--profile','browser']);
   for(const secret of privateMaterial)assert.ok(outputs.every(output=>!output.includes(secret)),'browser enrollment secret leaked');
   // The peer actually checked signatures, replay IDs, DPoP, PKCE, session/UserID and account bindings.

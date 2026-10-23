@@ -120,7 +120,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       if (p.credentialRef) fail('already_enrolled',5);
       const { createBrowserEnrollmentClient } = await import('@poppykit/client/provider');
       const enrollment = createBrowserEnrollmentClient({url:p.enrollmentUrl,provider:p.provider,company:p.domain,installationId:p.installationId,transport});
-      const pending = state.get<{requestId:string;secretRef:string;profileId:string;provider:string;domain:string;installationId:string;enrollmentUrl:string}>('browser-enrollment',p.id);
+      const pending = state.get<{requestId:string;secretRef:string;profileId:string;provider:string;domain:string;installationId:string;enrollmentUrl:string;cleanupOnly?:boolean}>('browser-enrollment',p.id);
       if (pending && (pending.profileId !== p.id || pending.provider !== p.provider || pending.domain !== p.domain || pending.installationId !== p.installationId || pending.enrollmentUrl !== p.enrollmentUrl)) fail('enrollment_binding_conflict',5);
       if (command === 'enroll') {
         if (pending) fail('enrollment_pending_run_enroll-status',5);
@@ -134,12 +134,19 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       if (!pending) fail('enrollment_required',3);
       const verifier = await backend.secrets.read(pending.secretRef) ?? fail('secure_store_locked',4);
       const discard = async () => { await backend!.secrets.remove(pending.secretRef); state!.remove('browser-enrollment',p.id); };
-      if (command === 'enroll-cancel') { await enrollment.cancel(pending.requestId,verifier); await discard(); return reply({canceled:true}); }
+      const cancelEnrollment = async () => {
+        state!.put('browser-enrollment',p.id,{...pending,cleanupOnly:true});
+        try { await enrollment.cancel(pending.requestId,verifier); }
+        catch { fail('enrollment_cleanup_required_run_enroll-cancel',6); }
+        await discard();
+      };
+      if (command === 'enroll-cancel') { await cancelEnrollment(); return reply({canceled:true}); }
+      if(pending.cleanupOnly)fail('enrollment_cleanup_required_run_enroll-cancel',6);
       let result;
       try { result = await enrollment.status(pending.requestId,verifier); }
       catch (error) {
         if(error && typeof error==='object' && 'code' in error && error.code==='rate_limited')return reply({status:'pending',nextAction:'Wait at least two seconds before enroll-status.'});
-        await enrollment.cancel(pending.requestId,verifier).catch(()=>{}); await discard(); throw error;
+        await cancelEnrollment(); throw error;
       }
       if (result.status === 'pending') return reply({status:'pending'});
       if (result.status === 'denied') { await discard(); return reply({status:'denied'}); }
@@ -154,7 +161,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
           state!.put('enrollment',p.id,{provider:p.provider,domain:p.domain,installationId:p.installationId,clientId,callbackUrl,credentialRef});
           state!.remove('browser-enrollment',p.id);
         });
-      } catch (error) { await enrollment.cancel(pending.requestId,verifier).catch(()=>{}); if(credentialRef)await backend.secrets.remove(credentialRef); await discard(); throw error; }
+      } catch (error) { if(credentialRef)await backend.secrets.remove(credentialRef); await cancelEnrollment(); throw error; }
       await backend.secrets.remove(pending.secretRef);
       return reply({enrolled:true,clientId:result.clientId,nextAction:'Run connect and discovery, then auth-start with the advertised scopes for separate company consent.'});
     }

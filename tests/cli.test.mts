@@ -16,14 +16,15 @@ import { SqliteProviderStore } from '@poppykit/client/provider/sqlite';
 
 const clientId='https://identity.example/client.json',callbackUrl='https://identity.example/callback',issuer='https://company.example/issuer';
 test('browser enrollment stages verifier before public start, resumes, binds once and cancels lost delivery',async()=>{
-  for(const mode of ['ready','lost','locked','denied']){
-    const home=await mkdtemp(join(tmpdir(),'browser enrollment ü ')),secrets=new Map<string,string>();let challenge='',canceled=false,locked=false;
+  for(const mode of ['ready','lost','lost-cancel','locked','denied']){
+    const home=await mkdtemp(join(tmpdir(),'browser enrollment ü ')),secrets=new Map<string,string>();let challenge='',canceled=false,locked=false,cancelAttempts=0,statusAttempts=0;
     const backend:SecureBackend={secrets:{async stage(value){if(locked)throw new Error('PRIVATE_LOCKED');const ref=randomUUID();secrets.set(ref,value);return ref;},async read(ref){return secrets.get(ref)??null;},async remove(ref){secrets.delete(ref);}},async healthCheck(){}};
     const transport:HttpTransport={async fetch(request){const input=await request.json();assert.ok(!request.url.includes('PRIVATE'));assert.equal(request.headers.has('authorization'),false);
       if(request.url.endsWith('/start')){challenge=input.challenge;assert.ok([...secrets.values()].some(value=>createHash('sha256').update(value).digest('base64url')===challenge));return Response.json({requestId:'r'.repeat(43),browserUrl:'https://identity.example/approve?id=public',expiresAt:Date.now()+300000});}
       assert.equal(createHash('sha256').update(input.verifier).digest('base64url'),challenge);
-      if(request.url.endsWith('/cancel')){canceled=true;return Response.json({canceled:true});}
-      if(mode==='lost')throw new Error('PRIVATE_NETWORK_FAILURE');
+      if(request.url.endsWith('/cancel')){cancelAttempts++;if(mode==='lost-cancel'&&cancelAttempts===1)throw new Error('PRIVATE_CANCEL_FAILURE');canceled=true;return Response.json({canceled:true});}
+      statusAttempts++;
+      if(mode==='lost'||mode==='lost-cancel')throw new Error('PRIVATE_NETWORK_FAILURE');
       if(mode==='locked')locked=true;
       return Response.json(mode==='denied'?{status:'denied'}:{status:'ready',credential:'PRIVATE_CREDENTIAL',clientId,callbackUrl});
     }};
@@ -33,9 +34,14 @@ test('browser enrollment stages verifier before public start, resumes, binds onc
       assert.equal((await run(['enroll'])).code,0);
       const completed=await run(['enroll-status']);
       const state=new State(join(home,'cli.sqlite'));
-      try{assert.equal(!!state.profile().credentialRef,mode==='ready');assert.equal(state.list('browser-enrollment').length,0);}finally{state.close();}
+      try{assert.equal(!!state.profile().credentialRef,mode==='ready');assert.equal(state.list('browser-enrollment').length,mode==='lost-cancel'?1:0);}finally{state.close();}
       if(mode==='ready'){assert.equal(completed.code,0);assert.deepEqual([...secrets.values()],['PRIVATE_CREDENTIAL']);}
-      else{assert.equal(secrets.size,0);assert.equal(canceled,mode!=='denied');}
+      else if(mode==='lost-cancel'){
+        assert.equal(completed.code,6);assert.equal(secrets.size,1);
+        assert.equal((await run(['enroll'])).code,5);
+        assert.equal((await run(['enroll-status'])).code,6);assert.equal(statusAttempts,1);
+        assert.equal((await run(['enroll-cancel'])).code,0);assert.equal(cancelAttempts,2);assert.equal(secrets.size,0);
+      }else{assert.equal(secrets.size,0);assert.equal(canceled,mode!=='denied');}
     }finally{await rm(home,{recursive:true,force:true});}
   }
 });
