@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0 (release candidate)
+
+Add browser enrollment start/status/cancel with private verifier custody, atomic
+profile binding and failed-delivery revocation. Add default Windows current-user
+DPAPI custody with verified user-only ACLs and fixed secret-free diagnostics.
+Retain custom backends, attended storage and all SDK authentication methods.
+
 ## 0.2.0 (release candidate)
 
 Await asynchronous provider callbacks and pin client 0.2.0.

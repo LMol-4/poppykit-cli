@@ -4,7 +4,7 @@ Run `poppykit --help` for commands and [usage](docs/usage.md) for configuration,
 secret custody, hosted enrollment, authentication, profiles and exit codes.
 
 `@poppykit/cli` exports the `SecureBackend` type, `encryptedBackend`,
-`hiddenInput`, `terminalTrustedInput` and `CliFailure`. The installed
+`windowsBackend`, `hiddenInput`, `terminalTrustedInput` and `CliFailure`. The installed
 `dist/index.d.ts` and `dist/secrets.d.ts` declarations define the complete seam.
 A trusted local module exports `open({purpose,unattended})` returning durable
 `secrets` and a `healthCheck`. Optional enrollment authentication, trusted

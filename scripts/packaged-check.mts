@@ -9,6 +9,20 @@ import { tmpdir } from 'node:os';
 import { join, resolve, delimiter } from 'node:path';
 import { pathToFileURL } from 'node:url';
 const project=resolve(process.argv[2]??'.');
+if(process.platform==='win32'){
+  const {windowsBackend}:typeof import('../dist/index.js')=await import(pathToFileURL(join(project,'node_modules/@poppykit/cli/dist/index.js')).href);
+  const directory=await mkdtemp(join(tmpdir(),'native DPAPI ü '));
+  try{
+    const backend=await windowsBackend(join(directory,'vault'));await backend.healthCheck();
+    const ref=await backend.secrets.stage('PRIVATE_DPAPI_SENTINEL');assert.equal(await backend.secrets.read(ref),'PRIVATE_DPAPI_SENTINEL');
+    const path=join(directory,'vault',ref+'.dpapi');assert.ok(!(await readFile(path)).includes(Buffer.from('PRIVATE_DPAPI_SENTINEL')));
+    await writeFile(path,Buffer.alloc(17));await assert.rejects(backend.secrets.read(ref),{code:'secure_store_unavailable'});
+    await backend.secrets.remove(ref);assert.equal(await backend.secrets.read(ref),null);
+    // A pre-existing directory inheriting broad permissions is refused rather than silently re-ACL'd.
+    await assert.rejects((await windowsBackend(directory)).healthCheck(),{code:'secure_store_unavailable'});
+    console.log('Installed Windows DPAPI roundtrip, ciphertext tamper and unsafe ACL rejection passed');
+  }finally{await rm(directory,{recursive:true,force:true});}
+}
 async function exported(name:string,subpath='.'){const directory=join(project,'node_modules',...name.split('/')),manifest=JSON.parse(await readFile(join(directory,'package.json'),'utf8'));const entry=manifest.exports[subpath];const target=typeof entry==='string'?entry:entry.import??entry.default;assert.ok(target);return pathToFileURL(join(directory,target)).href;}
 const cli=join(project,'node_modules/@poppykit/cli/dist/cli.js');
 const {createProvider,createResultCipher}:typeof import('@poppykit/client/provider')=await import(await exported('@poppykit/client','./provider'));

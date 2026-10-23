@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { CliFailure } from './secrets.js';
-export interface Profile { id: string; name: string; provider: string; domain: string; installationId: string; clientId?: string; callbackUrl?: string; credentialRef?: string; connectionId?: string }
+export interface Profile { id: string; name: string; provider: string; domain: string; installationId: string; enrollmentUrl?: string; clientId?: string; callbackUrl?: string; credentialRef?: string; connectionId?: string }
 export class State {
   private db: DatabaseSync;
   constructor(path: string) {

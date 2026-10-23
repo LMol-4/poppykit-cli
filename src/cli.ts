@@ -4,7 +4,7 @@ import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import type { State, Profile } from './state.js';
 import { CliFailure, openBackend, hiddenInput } from './secrets.js';
@@ -12,11 +12,11 @@ import type { SecureBackend } from './secrets.js';
 import type { ClientAuth, HttpTransport } from '@poppykit/client';
 
 export const HELP = `Usage: poppykit <command> [--json] [--profile NAME] [--unlock]
-Node >=24.12.0. Direct SDK execution; no daemon or PowerShell required.
-  setup --provider HTTPS_URL --company DOMAIN [--profile NAME]
+Node >=24.12.0. Direct SDK execution; no daemon. Windows custody uses built-in DPAPI.
+  setup --provider HTTPS_URL --company DOMAIN [--enrollment HTTPS_URL] [--profile NAME]
   backend --module ABSOLUTE_TRUSTED_MODULE
   profile list | profile remove NAME
-  enroll                         operator-authenticated trusted enrollment
+  enroll | enroll-status | enroll-cancel  browser enrollment when configured
   discovery | connect [--anonymous] | connections | scopes [--scope S]
   auth-start --method direct|device|mediated --scope S [--scope S]
   auth-status OP | auth-continue OP | auth-cancel OP | sign-out
@@ -30,7 +30,7 @@ Node >=24.12.0. Direct SDK execution; no daemon or PowerShell required.
   api-request --api DISCOVERED_URL --destination VERIFIED_URL [--method GET]
   browser-join --return-to HTTPS_URL | feedback --task TASK --description TEXT
   diagnostics | enrollment-revoke
-Unattended use requires a configured secure backend. --unlock explicitly uses
+Windows uses current-user DPAPI by default. Other unattended use requires a configured secure backend. --unlock explicitly uses
 attended encrypted storage with a hidden terminal passphrase each invocation.
 Exit: 0 complete/pending, 1 runtime/remote, 2 usage, 3 authorization, 4 secure
 backend/trusted input unavailable, 5 binding conflict, 6 uncertain, 130 canceled.
@@ -67,12 +67,12 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
   try {
     if (!runtimeSupported(process.versions.node)) fail('node_24_12_or_newer_required', 1);
     if (argv.length === 0 || argv.length === 1 && ['help','--help'].includes(command)) return { out: HELP, code: 0 };
-    const options = { json: { type: 'boolean' }, profile: { type: 'string' }, unlock: { type: 'boolean' }, provider: { type: 'string' }, company: { type: 'string' }, module: { type: 'string' }, scope: { type: 'string', multiple: true }, method: { type: 'string' }, connection: { type: 'string' }, text: { type: 'string' }, 'send-operation': { type: 'string' }, cursor: { type: 'string' }, consumer: { type: 'string' }, anonymous: { type: 'boolean' }, api: { type: 'string' }, destination: { type: 'string' }, 'return-to': { type: 'string' }, task: { type: 'string' }, description: { type: 'string' } } as const;
+    const options = { json: { type: 'boolean' }, profile: { type: 'string' }, unlock: { type: 'boolean' }, provider: { type: 'string' }, enrollment: { type: 'string' }, company: { type: 'string' }, module: { type: 'string' }, scope: { type: 'string', multiple: true }, method: { type: 'string' }, connection: { type: 'string' }, text: { type: 'string' }, 'send-operation': { type: 'string' }, cursor: { type: 'string' }, consumer: { type: 'string' }, anonymous: { type: 'boolean' }, api: { type: 'string' }, destination: { type: 'string' }, 'return-to': { type: 'string' }, task: { type: 'string' }, description: { type: 'string' } } as const;
     let parsed; try { parsed = parseArgs({ args: argv.slice(1), options, allowPositionals: true }); } catch { return fail('invalid_arguments'); }
     const v = parsed.values, pos = parsed.positionals, str = (key: keyof typeof options) => v[key] as string | undefined;
     const need = (count: number) => { if (pos.length !== count || pos.some(x => !x || x.includes('\0'))) fail('invalid_arguments'); };
     const required = (key: keyof typeof options) => str(key) ?? fail(`required_--${key}`);
-    const commands = ['setup','backend','profile','enroll','discovery','connect','connections','scopes','auth-start','auth-status','auth-continue','auth-cancel','sign-out','start','send','retry','status','retry-remove','read','watch','ack','handoff','close','api-target','api-request','browser-join','feedback','diagnostics','enrollment-revoke'];
+    const commands = ['setup','backend','profile','enroll','enroll-status','enroll-cancel','discovery','connect','connections','scopes','auth-start','auth-status','auth-continue','auth-cancel','sign-out','start','send','retry','status','retry-remove','read','watch','ack','handoff','close','api-target','api-request','browser-join','feedback','diagnostics','enrollment-revoke'];
     if (!commands.includes(command)) fail('unknown_command');
     const home = resolve(env.POPPYKIT_HOME ?? join(homedir(), '.poppykit'));
     const {State: StateStore}=await import('./state.js');
@@ -80,7 +80,11 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
     if (command === 'setup') {
       need(0); const provider = url(required('provider')), domain = required('company');
       if (!/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/i.test(domain) || domain.includes('..')) fail('invalid_company_domain');
-      return reply({ profile: publicProfile(state.createProfile(str('profile') ?? 'default', provider, domain)), nextAction: 'Configure backend, then enroll through a trusted user route' });
+      const enrollmentUrl = str('enrollment') ? url(required('enrollment')) : undefined;
+      if (enrollmentUrl && new URL(enrollmentUrl).origin !== new URL(provider).origin) fail('provider_identity_mismatch',5);
+      let profile: Profile = state.createProfile(str('profile') ?? 'default', provider, domain);
+      if (enrollmentUrl) profile = state.update(profile,{enrollmentUrl});
+      return reply({ profile: publicProfile(profile), nextAction: enrollmentUrl ? 'Run enroll, approve in your browser, then enroll-status. Company access requires separate consent.' : 'Configure backend, then enroll through a trusted user route' });
     }
     if (command === 'backend') { need(0); state.put('config','backend',{ module: resolve(required('module')) }); return reply({ configured: true }); }
     if (command === 'profile') {
@@ -111,6 +115,49 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
     backend = deps.backend ?? await openBackend({ module: config?.module, unlock: v.unlock, directory: join(home, 'encrypted-secrets') });
     if (deps.backend) await backend.healthCheck();
     if(backend.transport&&!deps.transport){transport.close?.();transport=cancelable(backend.transport,abort.signal);metadata=sdk.createMetadataResolver(transport);}
+    if (['enroll','enroll-status','enroll-cancel'].includes(command) && p.enrollmentUrl) {
+      need(0);
+      if (p.credentialRef) fail('already_enrolled',5);
+      const { createBrowserEnrollmentClient } = await import('@poppykit/client/provider');
+      const enrollment = createBrowserEnrollmentClient({url:p.enrollmentUrl,provider:p.provider,company:p.domain,installationId:p.installationId,transport});
+      const pending = state.get<{requestId:string;secretRef:string;profileId:string;provider:string;domain:string;installationId:string;enrollmentUrl:string}>('browser-enrollment',p.id);
+      if (pending && (pending.profileId !== p.id || pending.provider !== p.provider || pending.domain !== p.domain || pending.installationId !== p.installationId || pending.enrollmentUrl !== p.enrollmentUrl)) fail('enrollment_binding_conflict',5);
+      if (command === 'enroll') {
+        if (pending) fail('enrollment_pending_run_enroll-status',5);
+        const verifier = randomBytes(32).toString('base64url'), secretRef = await backend.secrets.stage(verifier);
+        try {
+          const started = await enrollment.start(createHash('sha256').update(verifier).digest('base64url'));
+          state.put('browser-enrollment',p.id,{...started,secretRef,profileId:p.id,provider:p.provider,domain:p.domain,installationId:p.installationId,enrollmentUrl:p.enrollmentUrl});
+          return reply({...started,nextAction:'Open browserUrl, sign in and approve enrollment; then run enroll-status. This grants no company access.'});
+        } catch (error) { await backend.secrets.remove(secretRef); throw error; }
+      }
+      if (!pending) fail('enrollment_required',3);
+      const verifier = await backend.secrets.read(pending.secretRef) ?? fail('secure_store_locked',4);
+      const discard = async () => { await backend!.secrets.remove(pending.secretRef); state!.remove('browser-enrollment',p.id); };
+      if (command === 'enroll-cancel') { await enrollment.cancel(pending.requestId,verifier); await discard(); return reply({canceled:true}); }
+      let result;
+      try { result = await enrollment.status(pending.requestId,verifier); }
+      catch (error) {
+        if(error && typeof error==='object' && 'code' in error && error.code==='rate_limited')return reply({status:'pending',nextAction:'Wait at least two seconds before enroll-status.'});
+        await enrollment.cancel(pending.requestId,verifier).catch(()=>{}); await discard(); throw error;
+      }
+      if (result.status === 'pending') return reply({status:'pending'});
+      if (result.status === 'denied') { await discard(); return reply({status:'denied'}); }
+      let credentialRef: string | undefined;
+      try {
+        credentialRef = await backend.secrets.stage(result.credential!);
+        const {clientId,callbackUrl} = result;
+        state.atomic(() => {
+          const current = state!.get<Profile>('profile',p.name);
+          if (current?.id !== p.id || current.credentialRef) fail('profile_changed',5);
+          state!.put('profile',p.name,{...current,credentialRef,clientId,callbackUrl});
+          state!.put('enrollment',p.id,{provider:p.provider,domain:p.domain,installationId:p.installationId,clientId,callbackUrl,credentialRef});
+          state!.remove('browser-enrollment',p.id);
+        });
+      } catch (error) { await enrollment.cancel(pending.requestId,verifier).catch(()=>{}); if(credentialRef)await backend.secrets.remove(credentialRef); await discard(); throw error; }
+      await backend.secrets.remove(pending.secretRef);
+      return reply({enrolled:true,clientId:result.clientId,nextAction:'Run connect and discovery, then auth-start with the advertised scopes for separate company consent.'});
+    }
     if (command === 'enroll') {
       need(0); if (p.credentialRef) fail('already_enrolled',5);
       const headers = new Headers(await (backend.enrollmentAuth ? backend.enrollmentAuth({ url: p.provider, installationId: p.installationId }) : Promise.resolve({ authorization: `Bearer ${await hiddenInput('Operator enrollment credential')}` })));

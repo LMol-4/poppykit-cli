@@ -1,7 +1,7 @@
 # CLI configuration and operations
 
 Install Node 24.12.0+ and the CLI using [README](../README.md). The client dependency
-is installed by npm; no server SDK, PowerShell, daemon or browser opener is needed.
+is installed by npm; no server SDK, daemon or browser opener is needed.
 Use actual configured provider/company URLs and a trusted local backend:
 
 ```sh
@@ -27,7 +27,32 @@ separately configured backend. Export/retain needed records before manual reset.
 
 ## Secure storage and trusted input
 
-Unattended operation requires an explicit secure backend and a successful health
+Windows defaults to current-user DPAPI through a hidden noninteractive PowerShell
+helper, with material sent over internal stdin/stdout pipes. Immutable ciphertext
+files have user-only ACLs, verified on every access. Missing user profile/DPAPI,
+unsafe ACLs, reparse points or tampered files fail closed. DPAPI protects storage
+at rest; arbitrary code running as the same Windows user can decrypt it.
+
+For a provider offering the optional browser-enrollment service:
+
+```sh
+poppykit setup --provider https://identity.example/v1 --enrollment https://identity.example/enrollment --company company.example --json
+poppykit enroll --json
+# Open browserUrl yourself and approve the displayed installation.
+poppykit enroll-status --json
+poppykit connect --json
+poppykit discovery --json
+```
+
+The CLI stages a private verifier before starting enrollment. Public browser links
+and request IDs grant no authority. `enroll-status` redeems once and stages the
+credential before binding the local profile. Poll at least two seconds apart.
+`enroll-cancel` revokes a pending/delivered enrollment if delivery failed; an
+uncertain/lost retrieval requires fresh enrollment. Company read/write consent is
+a subsequent `auth-start` operation. Provider revocation stops signing; use company
+revocation separately for issued grants. Credentials never belong in agent chat.
+
+Other unattended operation requires an explicit secure backend and a successful health
 check; missing, locked, unavailable or malformed backends fail with exit **4**.
 There is no plaintext fallback. Modules export `async open({purpose,unattended})`:
 

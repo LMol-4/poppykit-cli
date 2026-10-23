@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, rm, readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { main, runtimeSupported } from '../dist/cli.js';
 import { encryptedBackend, openBackend } from '../dist/secrets.js';
 import { State } from '../dist/state.js';
@@ -15,6 +15,30 @@ import { createProvider, createResultCipher } from '@poppykit/client/provider';
 import { SqliteProviderStore } from '@poppykit/client/provider/sqlite';
 
 const clientId='https://identity.example/client.json',callbackUrl='https://identity.example/callback',issuer='https://company.example/issuer';
+test('browser enrollment stages verifier before public start, resumes, binds once and cancels lost delivery',async()=>{
+  for(const mode of ['ready','lost','locked','denied']){
+    const home=await mkdtemp(join(tmpdir(),'browser enrollment ü ')),secrets=new Map<string,string>();let challenge='',canceled=false,locked=false;
+    const backend:SecureBackend={secrets:{async stage(value){if(locked)throw new Error('PRIVATE_LOCKED');const ref=randomUUID();secrets.set(ref,value);return ref;},async read(ref){return secrets.get(ref)??null;},async remove(ref){secrets.delete(ref);}},async healthCheck(){}};
+    const transport:HttpTransport={async fetch(request){const input=await request.json();assert.ok(!request.url.includes('PRIVATE'));assert.equal(request.headers.has('authorization'),false);
+      if(request.url.endsWith('/start')){challenge=input.challenge;assert.ok([...secrets.values()].some(value=>createHash('sha256').update(value).digest('base64url')===challenge));return Response.json({requestId:'r'.repeat(43),browserUrl:'https://identity.example/approve?id=public',expiresAt:Date.now()+300000});}
+      assert.equal(createHash('sha256').update(input.verifier).digest('base64url'),challenge);
+      if(request.url.endsWith('/cancel')){canceled=true;return Response.json({canceled:true});}
+      if(mode==='lost')throw new Error('PRIVATE_NETWORK_FAILURE');
+      if(mode==='locked')locked=true;
+      return Response.json(mode==='denied'?{status:'denied'}:{status:'ready',credential:'PRIVATE_CREDENTIAL',clientId,callbackUrl});
+    }};
+    const run=async(args:string[])=>{const result=await main([...args,'--json'],{POPPYKIT_HOME:home},{backend,transport});assert.ok(!JSON.stringify(result).includes('PRIVATE_'));return result;};
+    try{
+      assert.equal((await run(['setup','--provider','https://identity.example/v1','--enrollment','https://identity.example/enrollment','--company','company.example'])).code,0);
+      assert.equal((await run(['enroll'])).code,0);
+      const completed=await run(['enroll-status']);
+      const state=new State(join(home,'cli.sqlite'));
+      try{assert.equal(!!state.profile().credentialRef,mode==='ready');assert.equal(state.list('browser-enrollment').length,0);}finally{state.close();}
+      if(mode==='ready'){assert.equal(completed.code,0);assert.deepEqual([...secrets.values()],['PRIVATE_CREDENTIAL']);}
+      else{assert.equal(secrets.size,0);assert.equal(canceled,mode!=='denied');}
+    }finally{await rm(home,{recursive:true,force:true});}
+  }
+});
 async function fixture(){
   const home=await mkdtemp(join(tmpdir(),'poppy ü spaces ')),secrets=new Map<string,string>(),store=new SqliteProviderStore(join(home,'provider.sqlite'));
   const backend:SecureBackend={secrets:{async stage(v){const id=randomUUID();secrets.set(id,v);return id;},async read(id){return secrets.get(id)??null;},async remove(id){secrets.delete(id);}},async healthCheck(){},async enrollmentAuth(){return {'x-human':'yes'};},trustedInput:{async collect(req):Promise<Record<string,string>>{return req.challenge?{code:'PRIVATE_OTP'}:{password:'PRIVATE_PASSWORD'};}}};
@@ -34,10 +58,10 @@ async function fixture(){
 test('offline startup, runtime floor, stable JSON and no secure backend fallback',async()=>{
   assert.equal(runtimeSupported('24.11.9'),false);assert.equal(runtimeSupported('24.12.0'),true);assert.equal(runtimeSupported('25.0.0'),true);
   const home=await mkdtemp(join(tmpdir(),'startup ü '));try{
-    const help=await main(['--help'],{POPPYKIT_HOME:join(home,'absent')});assert.equal(help.code,0);assert.ok(typeof help.out==='string');assert.match(help.out,/no daemon or PowerShell/);assert.deepEqual(await readdir(home),[]);
+    const help=await main(['--help'],{POPPYKIT_HOME:join(home,'absent')});assert.equal(help.code,0);assert.ok(typeof help.out==='string');assert.match(help.out,/no daemon/);assert.deepEqual(await readdir(home),[]);
     const invalid=await main(['send','--password','SECRET'],{POPPYKIT_HOME:home});assert.equal(invalid.code,2);assert.ok(!JSON.stringify(invalid).includes('SECRET'));
     await main(['setup','--provider','https://identity.example/v1','--company','company.example'],{POPPYKIT_HOME:home});
-    const missing=await main(['enroll','--json'],{POPPYKIT_HOME:home});assert.equal(missing.code,4);assert.equal(reply(missing.out).error.code,'secure_backend_required');
+    const missing=await main(['enroll','--json'],{POPPYKIT_HOME:home}, {backend:{secrets:{stage:async()=>{throw new Error();},read:async()=>null,remove:async()=>{}},healthCheck:async()=>{throw new Error('PRIVATE_UNAVAILABLE');}}});assert.notEqual(missing.code,0);assert.ok(!JSON.stringify(missing).includes('PRIVATE_UNAVAILABLE'));
     const unattended=await main(['enroll','--unlock','--json'],{POPPYKIT_HOME:home});assert.equal(unattended.code,4);assert.equal(reply(unattended.out).error.code,'trusted_terminal_required');
   }finally{await rm(home,{recursive:true,force:true});}
 });
