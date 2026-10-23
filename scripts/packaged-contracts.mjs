@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {readFile,writeFile,readdir} from 'node:fs/promises';
+import {readFile,writeFile,readdir,access} from 'node:fs/promises';
 import {resolve,join,dirname} from 'node:path';
 import {pathToFileURL,fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
@@ -26,21 +26,23 @@ export async function main(){
 const [consumer,compiler,typeRoots]=process.argv.slice(2);
 assert.ok(consumer&&compiler&&typeRoots,'usage: packaged-contracts consumer typescript.js typeRoots');
 const project=resolve(consumer),packages=['client','server','cli'];let types='',i=0;
+const source=JSON.parse(await readFile(new URL('../package.json',import.meta.url),'utf8'));
+const pins=Object.fromEntries(await Promise.all(['client','server'].map(async name=>[name,JSON.parse(await readFile(new URL(`../.github/${name}-candidate.json`,import.meta.url),'utf8'))])));
 const manifests=[];
 for(const name of packages){
   const directory=join(project,'node_modules/@poppykit',name),manifest=JSON.parse(await readFile(join(directory,'package.json'),'utf8'));
-  assert.equal(manifest.name,'@poppykit/'+name);assert.equal(manifest.version,'0.0.0');
+  assert.equal(manifest.name,'@poppykit/'+name);assert.equal(manifest.version,name==='cli'?source.version:pins[name].version);
   await validateContents(directory,manifest);
   for(const [subpath,entry] of Object.entries(manifest.exports)){
     const specifier=manifest.name+(subpath==='.'?'':subpath.slice(1));
     assert.ok(entry.types&&entry.import);await readFile(join(directory,entry.types));await import(pathToFileURL(join(directory,entry.import)));
     types+=`import * as p${i} from ${JSON.stringify(specifier)};\nexport const e${i}=p${i};\n`;i++;
   }
-  for(const path of manifest.files)await readFile(join(directory,path==='dist'?'dist/index.js':path));
+  for(const path of manifest.files)await access(join(directory,path));
   assert.ok(!JSON.stringify(manifest).includes('file:')&&!JSON.stringify(manifest).includes('workspace:'));
   manifests.push({name:manifest.name,version:manifest.version,dependencies:manifest.dependencies,exports:Object.keys(manifest.exports)});
 }
-assert.deepEqual(manifests[2].dependencies,{'@poppykit/client':'0.0.0'});
+assert.deepEqual(manifests[2].dependencies,{'@poppykit/client':pins.client.version});
 assert.deepEqual(manifests[0].dependencies,{jose:'6.2.12'});assert.deepEqual(manifests[1].dependencies,{jose:'6.2.12'});
 const jose=JSON.parse(await readFile(join(project,'node_modules/jose/package.json'),'utf8'));assert.equal(jose.version,'6.2.12');
 const fixture=join(project,'contracts.mts');await writeFile(fixture,types);
