@@ -11,5 +11,12 @@ const executable=process.platform==='win32'?process.execPath:'npm';
 const prefix=process.platform==='win32'?[npmCli]:[];
 const result=spawnSync(executable,[...prefix,'install','--prefix',target,'--ignore-scripts','--no-package-lock','--no-audit','--no-fund',...manifest.files.map((row:{name:string})=>join(base,row.name))],{stdio:'inherit',windowsHide:true});
 assert.equal(result.status,0,'candidate install failed');
+// Installed-contract checks deliberately exercise the SDK's optional PostgreSQL subpaths.
+const sdk=JSON.parse(await readFile(join(target,'node_modules/@poppykit/client/package.json'),'utf8'));
+const backendPins=['pg','@types/pg','@types/node'].map(name=>{
+  const version:unknown=sdk.devDependencies?.[name];assert.ok(typeof version==='string'&&/^\d+\.\d+\.\d+$/.test(version),'exact SDK backend test pin required');return name+'@'+version;
+});
+const backend=spawnSync(executable,[...prefix,'install','--prefix',target,'--ignore-scripts','--no-package-lock','--no-audit','--no-fund',...backendPins],{stdio:'inherit',windowsHide:true});
+assert.equal(backend.status,0,'optional SDK backend test install failed');
 if(mode==='source')await cp(join(target,'node_modules',manifest.package,'dist'),resolve('dist'),{recursive:true});
 console.log(target);
