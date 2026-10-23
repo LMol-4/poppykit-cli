@@ -9,11 +9,12 @@ provider, sign in, exchange conversations and call verified integration hooks.
 Requires Node **24.12.0 or later** and npm on Windows, macOS or Linux, including
 headless Linux. No PowerShell, manual daemon, second terminal or browser opener
 is required. CI certifies Node 24.12.0; later majors are not separately certified.
-The packages are **private and unpublished, version 0.0.0**. Install verified
+Version **0.1.0** is an initial development release candidate under the [MIT license](LICENSE).
+It has not been published. Install verified
 candidate tarballs together so npm resolves the exact client dependency:
 
 ```sh
-npm install ./poppykit-client-0.0.0.tgz ./poppykit-cli-0.0.0.tgz
+npm install ./poppykit-client-0.1.0.tgz ./poppykit-cli-0.1.0.tgz
 npx --no-install poppykit --help
 ```
 

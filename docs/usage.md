@@ -5,11 +5,12 @@ headless use. It runs the client SDK directly. Install Node **24.12.0 or newer**
 npm packages do not bundle Node. No PowerShell, second terminal, desktop keyring,
 browser opener or manually managed helper/daemon is required.
 
-The packages are currently unpublished version `0.0.0`. For a candidate, install
+Version `0.1.0` is an initial development release candidate under MIT and remains
+unpublished. For a candidate, install
 the unchanged tested CLI and client tarballs together:
 
 ```sh
-npm install ./poppykit-client-0.0.0.tgz ./poppykit-cli-0.0.0.tgz
+npm install ./poppykit-client-0.1.0.tgz ./poppykit-cli-0.1.0.tgz
 npx poppykit --help
 ```
 
@@ -206,7 +207,7 @@ A public setup prompt contains only these four fields (use an actual published
 or locally supplied candidate version):
 
 ```text
-Package: @poppykit/cli@0.0.0
+Package: @poppykit/cli@0.1.0
 Provider: https://identity.example/v1
 Company: company.example
 Task: Ask about the available services.

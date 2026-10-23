@@ -47,3 +47,5 @@ coverage/
 /tests/harness.test.mjs
 
 /scripts/install-candidate.mjs
+
+/tests/license.test.mjs
