@@ -15,7 +15,8 @@
     "build": "tsc",
     "pack": "npm pack",
     "test": "node --test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check:docs": "node scripts/check-docs.mjs"
   },
   "devDependencies": {
     "typescript": "5.9.3",
@@ -23,7 +24,13 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "API.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "CHANGELOG.md",
+    "RELEASING.md",
+    "docs"
   ],
   "exports": {
     ".": {
@@ -36,5 +43,6 @@
   },
   "dependencies": {
     "@poppykit/client": "0.0.0"
-  }
+  },
+  "license": "UNLICENSED"
 }
