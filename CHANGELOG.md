@@ -1,23 +1,18 @@
 # Changelog
 
-## 0.1.0 — initial development release candidate (unpublished)
+## 0.1.1
 
-Cross-platform direct SDK execution, secure backend/attended encrypted storage,
-hosted enrollment/callbacks, all three auth methods, bound durable retries, profiles,
-JSON output, API/browser/feedback wiring and packaged integration checks.
+Documentation refresh: registry installation, runnable quickstarts, focused guides
+and the tagged GitHub/OIDC release runbook. No runtime API, storage format or
+third-party dependency change. Client dependency is exactly 0.1.1; SDK candidate pins match that release.
 
-- Select MIT licensing and ship the complete LICENSE.
-- Prepare public package metadata and the initial 0.1.0 version.
-- Preserve J8 strict TypeScript tests, real subprocess/security regressions and
-  immutable installed-package verification on Linux, macOS and Windows.
-- Depend exactly on @poppykit/client@0.1.0; the server remains an integration peer.
+## 0.1.0
 
-No npm publication has occurred. Version 0.x APIs/storage may still change; record
-compatibility and migration/reset implications with future changes. This release
-does not promise stable 1.0 compatibility or certify external host integrations.
+Initial MIT development release, published manually. Discovery, safe HTTPS, all
+three sign-in methods, targeted durable storage and recovery, conversations and
+API/browser/feedback hooks. The CLI uses the client SDK with trusted secure-backend
+adapters. J8 established strict typed tests and exact installed-artifact checks.
 
-## 0.0.0 — historical private development candidates
-
-J1–J8 established protocol capabilities, targeted storage, durable recovery,
-documentation, strict tests and fail-closed release verification. Their prior
-commits/artifact results remain historical evidence for those exact candidates.
+Version 0.x may still change APIs/storage; future changes must explain compatibility,
+migration/reset and security implications. No stable 1.0 or external-host certification
+is promised. Older private 0.0.0 candidates retain their own historical evidence.

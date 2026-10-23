@@ -1,24 +1,8 @@
 # CLI configuration and operations
 
-One npm CLI for Windows, macOS and Linux, including attended and unattended
-headless use. It runs the client SDK directly. Install Node **24.12.0 or newer**;
-npm packages do not bundle Node. No PowerShell, second terminal, desktop keyring,
-browser opener or manually managed helper/daemon is required.
-
-Version `0.1.0` is an initial development release candidate under MIT and remains
-unpublished. For a candidate, install
-the unchanged tested CLI and client tarballs together:
-
-```sh
-npm install ./poppykit-client-0.1.0.tgz ./poppykit-cli-0.1.0.tgz
-npx poppykit --help
-```
-
-After publication the CLI's exact SDK dependency is installed by npm. Development
-candidate installation also supplies the client tarball explicitly, alongside the
-existing pinned TypeScript 5.9.3, @types/node 24.10.0 and undici-types 7.16.0.
-The old pnpm lock described the superseded dependency-free pipe client; it is
-removed rather than pretending to resolve an unpublished package from npm.
+Install Node 24.12.0+ and the CLI using [README](../README.md). The client dependency
+is installed by npm; no server SDK, PowerShell, daemon or browser opener is needed.
+Use actual configured provider/company URLs and a trusted local backend:
 
 ```sh
 poppykit setup --provider https://identity.example/v1 --company company.example --profile work --json
@@ -207,16 +191,13 @@ A public setup prompt contains only these four fields (use an actual published
 or locally supplied candidate version):
 
 ```text
-Package: @poppykit/cli@0.1.0
+Package: @poppykit/cli@0.1.1
 Provider: https://identity.example/v1
 Company: company.example
 Task: Ask about the available services.
 ```
 
-The packaged CI workflow installs actual CLI/client tarballs into clean projects
-on Windows, macOS and Linux. Local Windows evidence includes durable encrypted
-subprocess auth/retry tests; its generic fixture explicitly replaces networking
-with a trusted HTTP tunnel, so it does not prove TLS or native keyring behavior.
-J6 recorded actual Windows/macOS/Linux results for its own immutable artifacts.
-Changed J7 candidates require fresh checks; no prior result certifies changed bytes.
-No package publication, service deployment or demo application is included.
+The packaged workflow checks real installed shims and lifecycle on Windows, macOS
+and Linux. Its generic HTTP tunnel does not certify production TLS, a native
+keyring, physical terminal, KMS or browser engine. Every new artifact requires
+its own [release verification](../RELEASING.md); old results do not certify new bytes.
