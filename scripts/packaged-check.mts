@@ -2,7 +2,7 @@ import {expectValue,publicEcJwk,reply} from '../test-support/cli-output.mjs';
 // Actual clean tarball install; explicit trusted tunnel fixture, not TLS/native-keyring evidence.
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, writeFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -74,9 +74,21 @@ async function companyRequest(request:Request){
 }
 const metadata=createMetadataResolver({fetch:companyRequest});
 const provider=createProvider({clientId,callbackUrl,jwksUri:providerOrigin+'/jwks',clientName:'Generic',store,cipher:createResultCipher(randomBytes(32)),metadata,authenticateEnrollment:async req=>req.headers.get('x-operator-auth')==='fixture-only'?{subject:'visitor',allowedCompanies:companies.map(c=>c.domain)}:null,verifySession:async b=>companies.some(c=>c.issuer===b.issuer&&c.sessions.get(b.sessionId)?.sub===b.userId),signer:{kid:'key',publicJwk:async()=>jwk,sign:async input=>new Uint8Array(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},pair.privateKey,new Uint8Array(input)))}});
+let browserApproved=false;
+const enrollments=new Map<string,{challenge:string;installationId:string;consumed:boolean}>(),privateMaterial:string[]=[];
+async function browserEnrollment(request:Request){
+  const body=await request.json();assert.equal(body.provider,providerUrl);assert.equal(body.company,companies[0].domain);
+  if(request.url.endsWith('/start')){const id=randomBytes(32).toString('base64url');enrollments.set(id,{challenge:body.challenge,installationId:body.installationId,consumed:false});return Response.json({requestId:id,browserUrl:providerOrigin+'/approve?id='+id,expiresAt:Date.now()+300000});}
+  const row=enrollments.get(body.requestId);assert.ok(row);assert.equal(row.installationId,body.installationId);assert.equal(createHash('sha256').update(body.verifier).digest('base64url'),row.challenge);privateMaterial.push(body.verifier);
+  if(!browserApproved)return Response.json({status:'pending'});
+  if(row.consumed)return Response.json({error:'consumed'},{status:400});
+  row.consumed=true;
+  const result=await provider.enroll(new Request(providerUrl+'/enroll',{headers:{'x-operator-auth':'fixture-only'}}),{version:1,installationId:body.installationId,idempotencyKey:body.requestId});privateMaterial.push(result.credential);
+  return Response.json({status:'ready',...result});
+}
 const server=createServer(async(req,res)=>{try{
   let data='';for await(const chunk of req)data+=chunk;const input=JSON.parse(data),request=new Request(input.url,{method:input.method,headers:input.headers,...(input.body?{body:input.body}:{})});
-  const response=new URL(input.url).origin===providerOrigin?await provider.handle(request):await companyRequest(request);
+  const response=new URL(input.url).pathname.startsWith('/enrollment/')?await browserEnrollment(request):new URL(input.url).origin===providerOrigin?await provider.handle(request):await companyRequest(request);
   if(lose&&input.method==='POST'&&input.url.endsWith('/conversations')){lose=false;res.destroy();return;}
   res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({status:response.status,headers:[...response.headers],body:await response.text()}));
 }catch{res.writeHead(500);res.end('{}');}});
@@ -118,6 +130,12 @@ try{
   for(let i=1;i<companies.length;i++){
     const name=i===1?'device':'mediated',p=['--profile',name];await ok(['setup',...p,'--provider',providerUrl,'--company',companies[i].domain]);await ok(['enroll',...p]);await ok(['connect',...p]);assert.equal((await run(['read','conversation1',...p])).code,5,'profile/company cannot inherit a conversation binding');const methods=await ok(['scopes',...p,'--scope','poppy:read']);assert.deepEqual(methods.methods.map(row=>row.method),[name]);const started=await ok(['auth-start',...p,'--method',name,'--scope','poppy:read']);assert.equal(started.outcome.status,'pending');if(name==='device')await new Promise(r=>setTimeout(r,5100));const done=await ok(['auth-continue',started.outcome.operationId,...p]);assert.equal(done.status,'completed');await ok(['sign-out',...p]);
   }
+  await ok(['setup','--profile','browser','--provider',providerUrl,'--enrollment',providerOrigin+'/enrollment','--company',companies[0].domain]);
+  const browserStart=await ok(['enroll','--profile','browser']);assert.ok(browserStart.browserUrl);
+  assert.equal((await ok(['enroll-status','--profile','browser'])).status,'pending');
+  browserApproved=true;assert.equal((await ok(['enroll-status','--profile','browser'])).enrolled,true);
+  await ok(['connect','--profile','browser']);
+  for(const secret of privateMaterial)assert.ok(outputs.every(output=>!output.includes(secret)),'browser enrollment secret leaked');
   // The peer actually checked signatures, replay IDs, DPoP, PKCE, session/UserID and account bindings.
   for(const c of companies){assert.ok(c.assertions.length>0);assert.ok(c.proofs.length>0);for(const secret of [...c.tokens.keys(),...c.grants.keys(),...c.secrets])assert.ok(outputs.every(out=>!out.includes(expectValue(secret))),'issued credential/proof leaked to stdout or stderr');}
   console.log(JSON.stringify({status:'passed',platform:process.platform,node:process.version,checks:['npm-bin','exports','all-three-auth-restarts','JWT-DPoP-PKCE-peer-verification','live-auth-second-process','concurrent-retry','stable-message-id','partial-consent','declined-successful-upgrade','continued-conversation','scope-hook-rejects-model-text','revocation','missing-locked-store','no-opener-keyring','unicode-space-paths','consumer-ack-watch-cursor','J4-openapi-mcp-browser-feedback'],transport:'explicit-fixture-tunnel; no TLS/native-keyring/browser-engine claim'}));
