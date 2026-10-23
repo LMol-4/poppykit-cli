@@ -56,7 +56,7 @@ test('Direct enrollment, callback, restart completion and sign-out redact all cr
     const connection=await f.ok(['connect']);assert.equal(connection.connection.status,'signed_out');
     const start=await f.ok(['auth-start','--method','direct','--scope','poppy:read']);const op=start.outcome.operationId;
     const authorization=new URL(start.authorizationUrl);assert.equal(authorization.hostname,'company.example');
-    const callback=new URL(callbackUrl);callback.searchParams.set('state',expectValue(authorization.searchParams.get('state')));callback.searchParams.set('iss',issuer);callback.searchParams.set('code','PRIVATE_CODE');f.provider.callback(callback.href);
+    const callback=new URL(callbackUrl);callback.searchParams.set('state',expectValue(authorization.searchParams.get('state')));callback.searchParams.set('iss',issuer);callback.searchParams.set('code','PRIVATE_CODE');await f.provider.callback(callback.href);
     const result=await f.ok(['auth-continue',op]);assert.equal(result.status,'completed');assert.equal(result.connection.status,'signed_in');
     assert.ok(!JSON.stringify([connection,start,result]).includes('PRIVATE_'));
     const scopes=await f.ok(['scopes','--scope','poppy:read']);assert.equal(scopes.sufficient,true);
@@ -95,7 +95,7 @@ test('separate processes concurrently create profiles without lost writes',async
 test('invocation cancellation fences a late Direct token response and retains uncertainty',async()=>{
   const f=await fixture();let release:(()=>void)|undefined;try{
     await f.ok(['connect']);const started=await f.ok(['auth-start','--method','direct','--scope','poppy:read']);
-    const u=new URL(callbackUrl);u.searchParams.set('state',expectValue(new URL(started.authorizationUrl).searchParams.get('state')));u.searchParams.set('iss',issuer);u.searchParams.set('code','PRIVATE_CODE');f.provider.callback(u.href);
+    const u=new URL(callbackUrl);u.searchParams.set('state',expectValue(new URL(started.authorizationUrl).searchParams.get('state')));u.searchParams.set('iss',issuer);u.searchParams.set('code','PRIVATE_CODE');await f.provider.callback(u.href);
     const original=f.transport.fetch;let reached:()=>void=()=>{throw new Error('uninitialized ready');};const ready=new Promise<void>(r=>reached=r),gate=new Promise<void>(r=>release=r);
     f.transport.fetch=async req=>{if(new URL(req.url).pathname==='/token'&&(await req.clone().text()).includes('authorization_code')){reached();await gate;}return original(req);};
     const pending=f.run(['auth-continue',started.outcome.operationId]);await ready;process.emit('SIGTERM');const canceled=await pending;assert.equal(canceled.code,130);assert.equal(canceled.out.error.code,'canceled');expectValue(release)();await new Promise(r=>setTimeout(r,20));

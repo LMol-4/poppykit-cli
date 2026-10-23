@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.0 (release candidate)
+
+Await asynchronous provider callbacks and pin client 0.2.0.
+
 ## 0.1.1
 
 Documentation refresh: registry installation, runnable quickstarts, focused guides

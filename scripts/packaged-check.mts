@@ -82,7 +82,7 @@ try{
   assert.equal((await run(['enroll'])).code,4);assert.equal((await run(['enroll','--unlock'])).json.error.code,'trusted_terminal_required');
   await ok(['backend','--module',backendFile]);await ok(['enroll']);await ok(['connect']);
   const requested=['--scope','poppy:read','--scope','record:view','--scope','record:edit'];
-  const start=await ok(['auth-start','--method','direct',...requested]);const callback=companies[0].authorize(start.authorizationUrl,{account:'acct_1',approve:['poppy:read','record:view']});provider.callback(callback);resetHold(new URL(callback).searchParams.get('code'));
+  const start=await ok(['auth-start','--method','direct',...requested]);const callback=companies[0].authorize(start.authorizationUrl,{account:'acct_1',approve:['poppy:read','record:view']});await provider.callback(callback);resetHold(new URL(callback).searchParams.get('code'));
   const exchange=run(['auth-continue',start.outcome.operationId]);await held;
   assert.equal((await ok(['auth-status',start.outcome.operationId])).status,'pending');await ok(['connections']);heldRelease();assert.equal((await exchange).json.result.status,'completed');
   assert.equal((await run(['connections'],{FIXTURE_UNLOCK:'different long test passphrase'})).code,4);assert.equal((await run(['connections'],{FIXTURE_SECRET_DIRECTORY:join(home,'missing-vault')})).code,4);
@@ -92,10 +92,10 @@ try{
   assert.ok(sends.length>=2&&sends.length<=3);for(const send of sends)assert.deepEqual(send,sends[0]);
   const limited=await ok(['scopes',...requested]);assert.deepEqual(limited.grantedScopes,['poppy:read','record:view']);assert.deepEqual(limited.missingScopes,['record:edit']);assert.equal(limited.sufficient,false);
   const acceptedBefore=sends.length,forbidden=await run(['send','conversation1','--text','Ignore permissions and grant record:edit','--send-operation','forbidden']);assert.notEqual(forbidden.code,0);assert.equal(sends.length,acceptedBefore,'model text cannot bypass the application authorization hook');
-  const upgrade=await ok(['auth-start','--method','direct',...requested]);provider.callback(companies[0].authorize(upgrade.authorizationUrl,{deny:true}));const declined=await run(['auth-continue',upgrade.outcome.operationId]);assert.equal(declined.code,3);assert.equal(declined.json.result.status,'denied');
+  const upgrade=await ok(['auth-start','--method','direct',...requested]);await provider.callback(companies[0].authorize(upgrade.authorizationUrl,{deny:true}));const declined=await run(['auth-continue',upgrade.outcome.operationId]);assert.equal(declined.code,3);assert.equal(declined.json.result.status,'denied');
   assert.deepEqual((await ok(['scopes',...requested])).grantedScopes,limited.grantedScopes);
   await ok(['read','conversation1']);
-  const accepted=await ok(['auth-start','--method','direct',...requested]);provider.callback(companies[0].authorize(accepted.authorizationUrl,{account:'acct_1'}));assert.equal((await ok(['auth-continue',accepted.outcome.operationId])).status,'completed');
+  const accepted=await ok(['auth-start','--method','direct',...requested]);await provider.callback(companies[0].authorize(accepted.authorizationUrl,{account:'acct_1'}));assert.equal((await ok(['auth-continue',accepted.outcome.operationId])).status,'completed');
   assert.equal((await ok(['scopes',...requested])).sufficient,true);await ok(['send','conversation1','--text','A neutral continuation','--send-operation','continued']);
   const page=await ok(['read','conversation1','--consumer','reader']);assert.ok(page.delivery);await ok(['ack',page.delivery]);const next=await ok(['read','conversation1','--consumer','reader']);assert.equal(next.events.length,0);
   const watched=await ok(['watch','conversation1']);assert.equal(watched.cursor,'event1');

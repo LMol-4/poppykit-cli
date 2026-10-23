@@ -6,13 +6,15 @@ or use verified integration hooks. [MIT](LICENSE).
 
 ## Install
 
+Version 0.2.0 is a release candidate until its publishing workflow completes.
+
 Requires Node **24.12.0+** and npm on Windows, macOS or Linux. CI tests Node 24.12.0;
 later majors are not separately certified. No PowerShell, daemon, second terminal
 or automatic browser opener is required. npm installs the exact client dependency;
 there is no server SDK dependency and Node is not bundled.
 
 ```sh
-npm install --global @poppykit/cli@0.1.1
+npm install --global @poppykit/cli@0.2.0
 ```
 
 ## Start offline
