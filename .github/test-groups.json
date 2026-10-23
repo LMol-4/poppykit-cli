@@ -1,15 +1,16 @@
 {
   "unit": [
-    "tests/candidate.test.mjs",
-    "tests/packaged-contracts.test.mjs"
+    "tests/candidate.test.mts",
+    "tests/packaged-contracts.test.mts"
   ],
   "contracts": [
-    "tests/cli.test.mjs"
+    "tests/cli.test.mts"
   ],
   "integration": [],
   "validation": [
-    "tests/release.test.mjs",
-    "tests/workflows.test.mjs",
-    "tests/registry.test.mjs"
+    "tests/release.test.mts",
+    "tests/workflows.test.mts",
+    "tests/registry.test.mts",
+    "tests/harness.test.mts"
   ]
 }

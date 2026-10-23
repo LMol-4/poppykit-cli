@@ -3,7 +3,7 @@ import {readFile,writeFile,readdir,access} from 'node:fs/promises';
 import {resolve,join,dirname} from 'node:path';
 import {pathToFileURL,fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
-export async function validateContents(directory,manifest){
+export async function validateContents(directory:string,manifest:{files:string[]}){
   async function visit(relative=''){
     for(const entry of await readdir(join(directory,relative),{withFileTypes:true})){
       const path=(relative?relative+'/':'')+entry.name;
@@ -35,7 +35,7 @@ for(const name of packages){
   await validateContents(directory,manifest);
   for(const [subpath,entry] of Object.entries(manifest.exports)){
     const specifier=manifest.name+(subpath==='.'?'':subpath.slice(1));
-    assert.ok(entry.types&&entry.import);await readFile(join(directory,entry.types));await import(pathToFileURL(join(directory,entry.import)));
+    assert.ok(entry&&typeof entry==='object'&&'types' in entry&&typeof entry.types==='string'&&'import' in entry&&typeof entry.import==='string');await readFile(join(directory,entry.types));await import(pathToFileURL(join(directory,entry.import)).href);
     types+=`import * as p${i} from ${JSON.stringify(specifier)};\nexport const e${i}=p${i};\n`;i++;
   }
   for(const path of manifest.files)await access(join(directory,path));

@@ -14,9 +14,12 @@
   "scripts": {
     "build": "tsc",
     "pack": "npm pack",
-    "test": "node --test",
+    "test": "npm run build:tests && node scripts/run-checks.mjs all",
     "typecheck": "tsc --noEmit",
-    "check:docs": "node scripts/check-docs.mjs"
+    "check:docs": "node scripts/check-docs.mjs",
+    "typecheck:tests": "tsc -p tsconfig.tests.json --noEmit",
+    "build:tests": "node scripts/build-tests.mjs",
+    "coverage": "npm run build && npm run build:tests && node scripts/coverage.mjs"
   },
   "devDependencies": {
     "typescript": "5.9.3",
