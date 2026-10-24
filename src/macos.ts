@@ -8,16 +8,19 @@ const helper = String.raw`
 ObjC.import('Foundation');
 ObjC.import('Security');
 function main() {
+  var phase = 'input';
   function output(value) { $.NSFileHandle.fileHandleWithStandardOutput.writeData($(JSON.stringify(value)).dataUsingEncoding($.NSUTF8StringEncoding)); }
   try {
     var bytes = $.NSFileHandle.fileHandleWithStandardInput.readDataToEndOfFile;
     var input = JSON.parse(ObjC.unwrap($.NSString.alloc.initWithDataEncoding(bytes, $.NSUTF8StringEncoding)));
+    phase = 'keychain';
     $.SecKeychainSetUserInteractionAllowed(false);
     var keychain = Ref();
     var status = input.keychain ? $.SecKeychainOpen(input.keychain, keychain) : $.SecKeychainCopyDefault(keychain);
     function check(code) { if (code !== 0) throw code; }
     check(status);
     function query() {
+      phase = 'query';
       var q = $.NSMutableDictionary.alloc.init;
       q.setObjectForKey($.kSecClassGenericPassword, $.kSecClass);
       q.setObjectForKey($(input.service), $.kSecAttrService);
@@ -29,6 +32,7 @@ function main() {
       add.setObjectForKey(keychain[0], $.kSecUseKeychain);
       add.setObjectForKey($('PoppyKit CLI local vault'), $.kSecAttrLabel);
       add.setObjectForKey($(input.value).dataUsingEncoding($.NSUTF8StringEncoding), $.kSecValueData);
+      phase = 'add';
       status = $.SecItemAdd(add, null);
       if (status !== -25299) check(status);
     } else if (input.action !== 'load') throw -50;
@@ -36,13 +40,15 @@ function main() {
     read.setObjectForKey($.NSArray.arrayWithObject(keychain[0]), $.kSecMatchSearchList);
     read.setObjectForKey($.kCFBooleanTrue, $.kSecReturnData);
     read.setObjectForKey($.kSecMatchLimitOne, $.kSecMatchLimit);
+    phase = 'read';
     status = $.SecItemCopyMatching(read, result);
     if (status === -25300) return output({ ok: true, value: null });
     check(status);
+    phase = 'decode';
     var value = ObjC.unwrap($.NSString.alloc.initWithDataEncoding(result[0], $.NSUTF8StringEncoding));
     if (typeof value !== 'string') throw -50;
     output({ ok: true, value: value });
-  } catch (error) { output({ ok: false, code: error === -25308 || error === -25293 ? 'secure_store_locked' : 'secure_store_unavailable' }); }
+  } catch (error) { output({ ok: false, code: error === -25308 || error === -25293 ? 'secure_store_locked' : 'secure_store_unavailable', phase: phase, status: typeof error === 'number' ? error : null }); }
 }
 main();
 `;
@@ -65,7 +71,7 @@ export function macosKeyStore(directory: string, keychain?: string): NativeKeySt
       try {
         if (code || failed) throw 0;
         const response = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-        if (response?.ok === false && ['secure_store_locked', 'secure_store_unavailable'].includes(response.code)) return reject(new CliFailure(response.code, 4));
+        if (response?.ok === false && ['secure_store_locked', 'secure_store_unavailable'].includes(response.code) && ['input','keychain','query','add','read','decode'].includes(response.phase) && (response.status === null || Number.isInteger(response.status))) return reject(Object.assign(new CliFailure(response.code, 4), { nativeDiagnostic: { phase: response.phase, status: response.status } }));
         if (response?.ok !== true || Object.keys(response).sort().join(',') !== 'ok,value' || !(response.value === null || typeof response.value === 'string' && response.value.length >= 12 && response.value.length <= 4096)) throw 0;
         resolve(response.value);
       } catch { reject(new CliFailure('secure_store_unavailable', 4)); }

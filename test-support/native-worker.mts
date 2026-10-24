@@ -22,4 +22,4 @@ try{
       }
     }finally{await backend.close?.();}
   }
-}catch(error){console.log(JSON.stringify({error:error&&typeof error==='object'&&'code'in error?error.code:'failed'}));process.exitCode=1;}
+}catch(error){console.log(JSON.stringify({error:error&&typeof error==='object'&&'code'in error?error.code:'failed',...(error&&typeof error==='object'&&'nativeDiagnostic'in error?{nativeDiagnostic:error.nativeDiagnostic}:{})}));process.exitCode=1;}
