@@ -51,3 +51,5 @@ coverage/
 /tests/license.test.mjs
 /scripts/native-smoke.mjs
 /test-support/native-worker.mjs
+/native/darwin-keychain
+/native/darwin-keychain.json

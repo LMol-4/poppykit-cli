@@ -20,21 +20,6 @@ try{
     security(['set-keychain-settings','-lut','3600',testKeychain]);
     security(['unlock-keychain','-p','',testKeychain]);
     security(['default-keychain','-d','user','-s',testKeychain]);
-    const probe=spawnSync('/usr/bin/osascript',['-l','JavaScript','-e',String.raw`
-ObjC.import('Foundation');ObjC.import('Security');
-var keychain=Ref();var open=$.SecKeychainCopyDefault(keychain);
-var results=[];
-for(var variant=0;variant<4;variant++){
-  var q=$.NSMutableDictionary.alloc.init;
-  q.setObjectForKey($.kSecClassGenericPassword,$.kSecClass);
-  q.setObjectForKey($('org.poppykit.test.nonexistent'),$.kSecAttrService);
-  if(variant>=1)q.setObjectForKey($(true),$.kSecReturnData);
-  if(variant>=2)q.setObjectForKey($.kSecMatchLimitOne,$.kSecMatchLimit);
-  if(variant>=3)q.setObjectForKey($.NSArray.arrayWithObject(keychain[0]),$.kSecMatchSearchList);
-  var ref=Ref();results.push({variant:variant,status:$.SecItemCopyMatching(q,ref)});
-}
-JSON.stringify({open:open,queries:results});
-`],{encoding:'utf8'});assert.equal(probe.status,0);console.log('Native API parameter probe: '+probe.stdout.trim());
   }
   const home=join(root,'new'),seed=worker({action:'seed-native',home,value});assert.equal(seed.status,0,JSON.stringify(seed.json));assert.equal(seed.json.tty,false);
   const read=worker({action:'read',home,ref:seed.json.ref});assert.equal(read.status,0,JSON.stringify(read.json));assert.equal(read.json.hash,createHash('sha256').update(value).digest('hex'));assert.equal(read.json.tty,false);

@@ -18,6 +18,8 @@ jobs:
         with:
           node-version: '24.12.0'
       - run: npm install --ignore-scripts --no-package-lock --no-audit --no-fund
+      - run: node scripts/build-native.mjs
+        if: runner.os == 'macOS'
       - run: npm run build
       - run: npm run build:tests
       - run: node --test --test-name-pattern="native adoption|native fresh vault|browser enrollment stages" tests/cli.test.mjs

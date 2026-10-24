@@ -30,13 +30,13 @@ function windowsKeyStore(directory: string): NativeKeyStore {
     const winner = await load(); if (!winner) throw new CliFailure('secure_store_unavailable', 4); return winner;
   } };
 }
-async function stores(directory: string, testKeys?: NativeKeyStore) {
+async function stores(directory: string, testKeys?: NativeKeyStore, interactive = false) {
   // DPAPI creates and verifies its restrictive Windows ACL before Node writes public metadata.
   const windows = process.platform === 'win32' && !testKeys ? await windowsBackend(directory) : undefined;
   if (windows && !await exists(join(directory, 'unlock-check'))) await windows.healthCheck();
   const path = await directoryPath(directory);
   if (!testKeys && !windows && process.platform !== 'darwin') throw new CliFailure('secure_backend_required', 4);
-  return { path, windows, keys: testKeys ?? (windows ? windowsKeyStore(join(path, 'native-keys')) : macosKeyStore(path)) };
+  return { path, windows, keys: testKeys ?? (windows ? windowsKeyStore(join(path, 'native-keys')) : macosKeyStore(path, interactive)) };
 }
 async function opened(path: string, key: string, windows?: SecureBackend): Promise<SecureBackend> {
   const encrypted = await encryptedBackend(path, key);
@@ -55,7 +55,7 @@ export async function nativeBackend(directory: string, testKeys?: NativeKeyStore
 }
 /** Explicit adoption keeps ciphertext/references intact; interrupted adoption is safe to repeat. */
 export async function migrateNativeStorage(directory: string, collect = () => hiddenInput('Unlock existing encrypted PoppyKit storage (12+ characters)'), testKeys?: NativeKeyStore): Promise<void> {
-  const { path, windows, keys } = await stores(directory, testKeys);
+  const { path, windows, keys } = await stores(directory, testKeys, !!process.stdin.isTTY && !!process.stderr.isTTY);
   const saved = await keys.load();
   if (saved) { const current = await opened(path, saved, windows); await current.close?.(); return; }
   if (!await exists(join(path, 'unlock-check'))) throw new CliFailure('no_attended_storage_to_migrate', 5);
