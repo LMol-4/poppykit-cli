@@ -67,7 +67,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
   let state: State | undefined, backend: SecureBackend | undefined, transport: HttpTransport | undefined, authStore: any, conversationStore: any;
   let retryHandle:string|undefined;
   let boundedWatchComplete=false;
-  let releaseApproval:(()=>void)|undefined, approvalTimer:ReturnType<typeof setTimeout>|undefined, approvalTimedOut=false, resume:unknown, inspectApproval:(()=>Promise<any>)|undefined;
+  let releaseApproval:(()=>void)|undefined, approvalTimer:ReturnType<typeof setTimeout>|undefined, approvalTimedOut=false, resume:{command:string;profile:string;operationId?:string;requestId?:string}|undefined, inspectApproval:(()=>Promise<any>)|undefined;
   const abort = new AbortController(), canceled = () => {boundedWatchComplete=false;abort.abort();};
   process.once('SIGINT', canceled); process.once('SIGTERM', canceled);
   try {
@@ -85,7 +85,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       deps.progress?.(clean({...value,resume,notice:'Waiting for your browser decision. No chat reply is needed. Ctrl+C stops waiting; saved approval can be resumed.'}));
       if (value.browserUrl && !v['no-open']) try { await (deps.openBrowser ?? openApprovalBrowser)(value.browserUrl); } catch { deps.progress?.({notice:'Open the approval link in your browser.'}); }
     };
-    const beginWait = (handle:unknown) => { resume=handle; approvalTimer=setTimeout(()=>{approvalTimedOut=true;abort.abort();},timeoutSeconds*1000); };
+    const beginWait = (handle:NonNullable<typeof resume>) => { resume=handle; approvalTimer=setTimeout(()=>{approvalTimedOut=true;abort.abort();},timeoutSeconds*1000); };
     const commands = ['setup','backend','storage','profile','enroll','enroll-status','enroll-cancel','discovery','connect','connections','scopes','auth-start','auth-status','auth-continue','auth-wait','auth-cancel','sign-out','start','send','retry','status','retry-remove','read','watch','ack','handoff','close','api-target','api-request','browser-join','feedback','diagnostics','enrollment-revoke'];
     if (!commands.includes(command)) fail('unknown_command');
     const home = resolve(env.POPPYKIT_HOME ?? join(homedir(), '.poppykit'));
@@ -147,7 +147,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       }
       const { createBrowserEnrollmentClient } = await import('@poppykit/client/provider');
       const enrollment = createBrowserEnrollmentClient({url:p.enrollmentUrl,provider:p.provider,company:p.domain,installationId:p.installationId,transport});
-      let pending = state.get<{requestId:string;secretRef:string;profileId:string;provider:string;domain:string;installationId:string;enrollmentUrl:string;browserUrl?:string;expiresAt?:number;cleanupOnly?:boolean}>('browser-enrollment',p.id);
+      let pending = state.get<{requestId:string;secretRef:string;profileId:string;provider:string;domain:string;installationId:string;enrollmentUrl:string;browserUrl?:string;expiresAt?:number;cleanupOnly?:boolean;retrieving?:boolean;resultRef?:string}>('browser-enrollment',p.id);
       if (pending && (pending.profileId !== p.id || pending.provider !== p.provider || pending.domain !== p.domain || pending.installationId !== p.installationId || pending.enrollmentUrl !== p.enrollmentUrl)) fail('enrollment_binding_conflict',5);
       if (command === 'enroll' && !pending) {
         const verifier = randomBytes(32).toString('base64url'), secretRef = await backend.secrets.stage(verifier);
@@ -159,11 +159,12 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
         } catch (error) { await backend.secrets.remove(secretRef); throw error; }
       }
       if (!pending) fail('enrollment_required',3);
+      resume={command:'enroll',profile:p.name,requestId:pending.requestId};
       const savedPending=pending;
       const verifier = await backend.secrets.read(pending.secretRef) ?? fail('secure_store_locked',4);
-      const discard = async () => { await backend!.secrets.remove(savedPending.secretRef); state!.remove('browser-enrollment',p.id); };
+      const discard = async () => { await backend!.secrets.remove(savedPending.secretRef); const latest=state!.get<typeof savedPending>('browser-enrollment',p.id);if(latest?.resultRef)await backend!.secrets.remove(latest.resultRef);state!.remove('browser-enrollment',p.id); };
       const cancelEnrollment = async () => {
-        state!.put('browser-enrollment',p.id,{...pending,cleanupOnly:true});
+        state!.put('browser-enrollment',p.id,{...state!.get<typeof savedPending>('browser-enrollment',p.id),cleanupOnly:true});
         try { await enrollment.cancel(savedPending.requestId,verifier); }
         catch { fail('enrollment_cleanup_required_run_enroll-cancel',6); }
         await discard();
@@ -171,10 +172,25 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       if (command === 'enroll-cancel') { await cancelEnrollment(); return reply({canceled:true}); }
       if(pending.cleanupOnly)fail('enrollment_cleanup_required_run_enroll-cancel',6);
       if (waiting) { beginWait({command:'enroll',profile:p.name,requestId:pending.requestId}); await announce({browserUrl:pending.browserUrl,requestId:pending.requestId,installationId:p.installationId,expiresAt:pending.expiresAt}); }
+      const poll=async()=>{
+        const current=state!.get<typeof savedPending>('browser-enrollment',p.id)!;
+        if(current.resultRef)return JSON.parse(await backend!.secrets.read(current.resultRef)??fail('secure_store_locked',4)) as Awaited<ReturnType<typeof enrollment.status>>;
+        if(current.retrieving)fail('approval_result_uncertain',6);
+        state!.put('browser-enrollment',p.id,{...current,retrieving:true});
+        let value;
+        try { value=await enrollment.status(current.requestId,verifier); }
+        catch(error){if((error as {code?:string}).code==='rate_limited')state!.put('browser-enrollment',p.id,{...current,retrieving:false});throw error;}
+        if(value.status==='ready'){
+          const resultRef=await backend!.secrets.stage(JSON.stringify(value));
+          state!.put('browser-enrollment',p.id,{...current,retrieving:false,resultRef});
+        }else state!.put('browser-enrollment',p.id,{...current,retrieving:false});
+        return value;
+      };
       let result;
-      try { result = waiting ? await waitForApproval(()=>enrollment.status(savedPending.requestId,verifier),{signal:abort.signal,pending:value=>value.status==='pending',timeoutMs:timeoutSeconds*1000}) : await enrollment.status(pending.requestId,verifier); }
+      try { result = waiting ? await waitForApproval(poll,{signal:abort.signal,pending:value=>value.status==='pending',timeoutMs:timeoutSeconds*1000}) : await poll(); }
       catch (error) {
         if (abort.signal.aborted) throw error;
+        if(waiting&&state.get<typeof savedPending>('browser-enrollment',p.id)?.retrieving)throw new CliFailure('approval_result_uncertain',6);
         if(error && typeof error==='object' && 'code' in error && error.code==='rate_limited')return reply({status:'pending',nextAction:'Wait at least two seconds before enroll-status.'});
         await cancelEnrollment(); throw error;
       }
@@ -182,6 +198,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       if (result.status === 'pending') return reply({status:'pending'});
       if (result.status === 'denied') { await discard(); return reply({status:'denied'}); }
       let credentialRef: string | undefined;
+      const resultRef=state.get<typeof savedPending>('browser-enrollment',p.id)?.resultRef;
       try {
         credentialRef = await backend.secrets.stage(result.credential!);
         const {clientId,callbackUrl} = result;
@@ -194,6 +211,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
         });
       } catch (error) { if(credentialRef)await backend.secrets.remove(credentialRef); await cancelEnrollment(); throw error; }
       await backend.secrets.remove(pending.secretRef);
+      if(resultRef)await backend.secrets.remove(resultRef);
       return reply({enrolled:true,clientId:result.clientId,nextAction:'Run connect and discovery, then auth-start with the advertised scopes for separate company consent.'});
     }
     if (command === 'enroll') {
@@ -234,6 +252,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       if (waiting && connection.status==='signed_in' && access.sufficient) return reply({status:'completed',connection,reused:true});
       const browserBinding = randomUUID() + randomUUID();
       const result = await auth.beginSignIn(connectionId,{method: method as any, scopes: v.scope ?? [],redirectUri:p.callbackUrl,browserBinding});
+      resume={command:'auth-wait',profile:p.name,operationId:result.outcome.operationId};
       if (result.authorizationUrl) {
         const secretRef = await backend.secrets.stage(JSON.stringify({ browserBinding, authorizationUrl: result.authorizationUrl }));
         state.put('direct',result.outcome.operationId,{profileId:p.id,connectionId:result.outcome.connection.id,issuer:result.outcome.connection.issuer,sessionId:result.outcome.connection.sessionId,secretRef});
@@ -250,10 +269,11 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
     if (['auth-start','auth-status','auth-continue','auth-wait','auth-cancel'].includes(command)) {
       need(1); const op = await auth.operation(pos[0]); if (!op || op.connection.id !== connectionId) fail('operation_binding_conflict',5);
       if (command === 'auth-status') return reply(op);
+      resume={command:'auth-wait',profile:p.name,operationId:pos[0]};
       releaseApproval??=state.claimApproval(`auth:${p.id}:${connectionId}`);
-      const direct = state.get<any>('direct',pos[0]);
+      let direct = state.get<any>('direct',pos[0]);
       if (direct && (direct.profileId !== p.id || direct.connectionId !== connectionId || direct.issuer !== connection.issuer || direct.sessionId !== connection.sessionId)) fail('operation_binding_conflict',5);
-      if (command === 'auth-cancel') { const outcome=await auth.cancelSignIn(pos[0]); if (direct) { await provider.cancel(pos[0]); await backend.secrets.remove(direct.secretRef); state.remove('direct',pos[0]); } return reply(outcome); }
+      if (command === 'auth-cancel') { const outcome=await auth.cancelSignIn(pos[0]); if (direct) { await provider.cancel(pos[0]); await backend.secrets.remove(direct.secretRef);if(direct.resultRef)await backend.secrets.remove(direct.resultRef);state.remove('direct',pos[0]); } return reply(outcome); }
       if (op.status !== 'pending') return reply(op);
       const material=direct?JSON.parse(await backend.secrets.read(direct.secretRef)??fail('secure_store_locked',4)):undefined;
       if (command==='auth-wait') { beginWait({command:'auth-wait',profile:p.name,operationId:pos[0]}); inspectApproval=()=>auth.operation(pos[0]); await announce({operationId:pos[0],browserUrl:material?.authorizationUrl}); }
@@ -261,11 +281,20 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
         const current=await auth.operation(pos[0]);
         if (!current || current.status!=='pending') return current??fail('operation_binding_conflict',5);
         if (!direct) return auth.continueSignIn(pos[0]);
-        await provider.beginDirect({operationId:pos[0],issuer:direct.issuer,sessionId:direct.sessionId,state:new URL(material.authorizationUrl).searchParams.get('state')!});
-        const result=await provider.takeResult({operationId:pos[0],issuer:direct.issuer,sessionId:direct.sessionId});
-        if (result.status==='pending') return current;
-        const outcome=await auth.completeSignIn({callbackUrl:result.callbackUrl,browserBinding:material.browserBinding});
-        if (outcome.status!=='pending') { await backend!.secrets.remove(direct.secretRef); state!.remove('direct',pos[0]); }
+        if(direct.retrieving)fail('approval_result_uncertain',6);
+        if(!direct.resultRef){
+          await provider.beginDirect({operationId:pos[0],issuer:direct.issuer,sessionId:direct.sessionId,state:new URL(material.authorizationUrl).searchParams.get('state')!});
+          direct={...direct,retrieving:true};state!.put('direct',pos[0],direct);
+          let result;
+          try { result=await provider.takeResult({operationId:pos[0],issuer:direct.issuer,sessionId:direct.sessionId}); }
+          catch(error){if((error as {code?:string}).code==='rate_limited'){direct={...direct,retrieving:false};state!.put('direct',pos[0],direct);}throw error;}
+          if(result.status==='pending'){direct={...direct,retrieving:false};state!.put('direct',pos[0],direct);return current;}
+          const resultRef=await backend!.secrets.stage(result.callbackUrl);
+          direct={...direct,retrieving:false,resultRef};state!.put('direct',pos[0],direct);
+        }
+        const callbackUrl=await backend!.secrets.read(direct.resultRef)??fail('secure_store_locked',4);
+        const outcome=await auth.completeSignIn({callbackUrl,browserBinding:material.browserBinding});
+        if (outcome.status!=='pending') { await backend!.secrets.remove(direct.secretRef);await backend!.secrets.remove(direct.resultRef);state!.remove('direct',pos[0]); }
         return outcome;
       };
       const outcome=waiting?await waitForApproval(poll,{signal:abort.signal,pending:value=>value.status==='pending',timeoutMs:timeoutSeconds*1000}):await poll();
@@ -320,6 +349,9 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
     if (command === 'handoff' || command === 'close') { need(1); return reply(await conversation[command](pos[0],{signal:abort.signal})); }
     return fail('unknown_command');
   } catch(error) {
+    const enrollmentProfile=resume?.command==='enroll'&&state?.list<Profile>('profile').find(row=>row.value.name===resume!.profile)?.value;
+    const retrievalUncertain=!!(resume?.operationId?state?.get<any>('direct',resume.operationId)?.retrieving:enrollmentProfile&&state?.get<any>('browser-enrollment',enrollmentProfile.id)?.retrieving);
+    if(retrievalUncertain)return {out:{version:1,command,status:'error',requestId,result:{status:'uncertain',resume},error:{code:abort.signal.aborted&&!approvalTimedOut?'canceled':'approval_result_uncertain',nextAction:'One-time retrieval may have completed remotely. Do not retry retrieval. Inspect the saved request, then explicitly cancel it before starting a fresh authorization.'}},code:abort.signal.aborted&&!approvalTimedOut?130:6};
     if (approvalTimedOut) {
       const outcome=await inspectApproval?.();
       if(outcome&&outcome.status!=='pending')return {out:{version:1,command,status:'ok',requestId,result:clean(outcome)},code:outcome.status==='uncertain'?6:['denied','expired','failed'].includes(outcome.status)?3:outcome.status==='cancelled'?130:0};

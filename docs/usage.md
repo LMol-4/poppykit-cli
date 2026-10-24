@@ -93,8 +93,12 @@ result for existing integrations. `auth-status`, `auth-continue`, `enroll-status
 and explicit cancellation commands remain available with their existing roles.
 Each poll is a short request; the server never holds a human-length request open.
 Rate-limit/device retry guidance is honored. SIGINT/SIGTERM stops the local wait
-with exit 130 and retains the bound request. A timeout returns pending plus resume
-metadata. Run `enroll` again for saved enrollment or `auth-wait OP` for company
+with exit 130 and retains the bound request. A timeout while waiting returns
+pending plus resume metadata; lost one-time retrieval returns uncertain instead.
+Received enrollment/callback material is saved encrypted before local completion.
+Uncertain retrieval is never dispatched again: inspect and explicitly cancel the
+saved request before starting a fresh authorization. Run `enroll` again for safely
+saved enrollment or `auth-wait OP` for company
 consent after interruption. `enroll-cancel`/`auth-cancel OP` explicitly cancel.
 One local process at a time may consume each profile/connection approval; dead
 owners can be recovered. Never delete state to bypass a live owner.
