@@ -8,6 +8,8 @@ Migration preserves ciphertext/references and recovers interrupted publication.
 Repeated successful enrollment retrieval now succeeds locally without redeeming
 again. Pin client 0.3.1 for bounded assertion clock tolerance and safe actionable
 provider diagnostics. Windows DPAPI files receive explicit owner-only ACLs.
+Company HTTP 5xx failures now expose a fixed availability diagnostic and retain
+the saved send handle, with guidance to retry the same message after recovery.
 
 ## 0.3.0 (release candidate)
 

@@ -36,7 +36,7 @@ attended encrypted storage with a hidden terminal passphrase each invocation.
 Exit: 0 complete/pending, 1 runtime/remote, 2 usage, 3 authorization, 4 secure
 backend/trusted input unavailable, 5 binding conflict, 6 uncertain, 130 canceled.
 `;
-type Reply = { version: 1; command: string; status: 'ok' | 'error'; result?: unknown; error?: { code: string; nextAction?: string }; requestId: string };
+type Reply = { version: 1; command: string; status: 'ok' | 'error'; result?: unknown; sendOperation?: string; error?: { code: string; nextAction?: string; httpStatus?: number }; requestId: string };
 interface Dependencies { sdk?: typeof import('@poppykit/client'); transport?: HttpTransport; backend?: SecureBackend }
 function fail(code: string, exitCode = 2): never { throw new CliFailure(code, exitCode); }
 const clean = (value: any): any => {
@@ -266,10 +266,10 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
     if (command === 'start' || command === 'send' || command === 'retry') {
       need(command==='start'?0:1);
       const handle = command==='retry'?pos[0]:str('send-operation') ?? randomUUID();
-      retryHandle=handle;
       if (!/^[A-Za-z0-9._-]{1,128}$/.test(handle)) fail('invalid_send_operation');
       const payload = command==='retry'?undefined:{command,conversationId:command==='send'?pos[0]:null,text:required('text')};
       const row = state.prepareRetry(handle,binding,payload);
+      retryHandle=handle;
       abort.signal.throwIfAborted();
       const message = {id:row.messageId,sender:'agent' as const,text:row.payload.text};
       const result = row.payload.command==='start'?await conversation.start(message,{signal:abort.signal}):await conversation.send(row.payload.conversationId,message,{signal:abort.signal});
@@ -287,11 +287,12 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
     if (command === 'handoff' || command === 'close') { need(1); return reply(await conversation[command](pos[0],{signal:abort.signal})); }
     return fail('unknown_command');
   } catch(error) {
-    const known = error instanceof CliFailure, safe = error as { code?: string; retryAfterMs?: number };
+    const known = error instanceof CliFailure, safe = error as { code?: string; retryAfterMs?: number; status?: number };
     if(!abort.signal.aborted&&safe.code==='renewal_pending'&&retryHandle)return reply({status:'pending',sendOperation:retryHandle,nextAction:'retry_after_live_auth_finishes'});
     const authCodes = ['anonymous_unavailable','sign_in_required','insufficient_scope','invalid_scope','unsupported_method','direct_unavailable','device_unavailable','mediated_unavailable','trusted_input_required','provider_unavailable','provider_unauthorized','provider_rate_limited','provider_network_error','provider_invalid_response','provider_assertion_expired','provider_clock_skew','disconnected','invalid_grant','rate_limited','secure_store_locked','secure_store_unavailable','unauthorized','expired','canceled','consumed','binding_conflict'];
     const sdkCode = safe.code && authCodes.includes(safe.code) ? safe.code : undefined;
-    const code = abort.signal.aborted ? 'canceled' : known ? error.code : sdkCode ?? 'operation_failed';
+    const httpStatus = safe.code==='http_error' && typeof safe.status==='number' && Number.isInteger(safe.status) && safe.status>=500 && safe.status<=599 ? safe.status : undefined;
+    const code = abort.signal.aborted ? 'canceled' : known ? error.code : httpStatus ? 'company_unavailable' : sdkCode ?? 'operation_failed';
     // Fixed failure vocabulary: raw remote/provider/module/OS diagnostics never reach a harness.
     const hints: Record<string,string> = {
       storage_migration_required: 'Run poppykit storage migrate in your own terminal once, then omit --unlock. Keep the passphrase out of chat.',
@@ -304,14 +305,16 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       provider_unavailable: 'The provider could not complete this request. Report the command, error code and approximate UTC time.',
       secure_store_locked: process.platform === 'darwin' ? 'Unlock your Keychain. After a CLI upgrade, run poppykit storage migrate in your own terminal to permit one-time OS access approval, then retry without --unlock. Never send credentials in chat.' : 'Unlock your OS vault, or use the correct attended passphrase. Do not put credentials in chat.',
       native_helper_unavailable: 'Reinstall the published CLI package; its bundled native helper is missing or failed its integrity check. Do not download a helper from company metadata.',
+      company_unavailable: 'The company service is unavailable or paused. Ask its operator to check availability before retrying; enrollment does not need to be repeated.',
     };
-    return {out:{version:1,command,status:'error',requestId,error:{code,...(hints[code]?{nextAction:hints[code]}:{})}},code:abort.signal.aborted?130:known?error.exitCode:code==='consumed'?6:code==='binding_conflict'?5:['trusted_input_required','provider_unavailable','secure_store_locked','secure_store_unavailable'].includes(code)?4:['sign_in_required','insufficient_scope','unauthorized','invalid_grant','provider_unauthorized'].includes(code)?3:1};
+    const nextAction=[hints[code],retryHandle?'Delivery is unconfirmed. Keep this sendOperation and use retry with the same handle when ready; do not create a replacement message.':undefined].filter(Boolean).join(' ');
+    return {out:{version:1,command,status:'error',requestId,...(retryHandle?{sendOperation:retryHandle}:{}),error:{code,...(httpStatus?{httpStatus}:{}),...(nextAction?{nextAction}:{})}},code:abort.signal.aborted?130:known?error.exitCode:code==='consumed'?6:code==='binding_conflict'?5:['trusted_input_required','provider_unavailable','secure_store_locked','secure_store_unavailable'].includes(code)?4:['sign_in_required','insufficient_scope','unauthorized','invalid_grant','provider_unauthorized'].includes(code)?3:1};
   } finally { process.off('SIGINT',canceled);process.off('SIGTERM',canceled);for(const dispose of [()=>authStore?.close(),()=>conversationStore?.close(),()=>transport?.close?.(),()=>backend?.close?.(),()=>state?.close()])try{await dispose();}catch{/* Cleanup adapters cannot expose private errors. */} }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   const {out,code}=await main(process.argv.slice(2));
   const structured=process.argv.includes('--json');
-  process.stdout.write(typeof out==='string'?out:structured?JSON.stringify(out)+'\n':out.status==='error'?`poppykit: ${out.error?.code}\n`:JSON.stringify(out.result,null,2)+'\n');
+  process.stdout.write(typeof out==='string'?out:structured?JSON.stringify(out)+'\n':out.status==='error'?`poppykit: ${out.error?.code}\n${out.sendOperation?`sendOperation: ${out.sendOperation}\n`:''}${out.error?.nextAction?`${out.error.nextAction}\n`:''}`:JSON.stringify(out.result,null,2)+'\n');
   process.exitCode=code;
 }
 

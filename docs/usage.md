@@ -214,6 +214,14 @@ retained retry payload. It cannot cancel remote accepted work. The CLI limits
 retained retries and pending consumer deliveries to 1,000 each; explicitly remove
 or acknowledge old records when full. There is no automatic transcript loss.
 
+Failed sends return the saved `sendOperation`, including an automatically generated
+handle. Typed company HTTP 5xx errors report `company_unavailable` and a safe
+`error.httpStatus`; remote error bodies are never copied into CLI diagnostics.
+The company may be paused. Ask its operator to check availability. Delivery remains
+unconfirmed: preserve the handle and use `retry HANDLE` when ready, rather than
+creating another message or repeating enrollment. Read current shared state before
+preparing a new versioned update; a failed send does not prove that no brief exists.
+
 `read CONVERSATION` reads one page. `watch CONVERSATION` returns at most 100
 events or 30 seconds and returns a cursor; pass `--cursor` to resume. For durable
 consumption use `--consumer NAME`, process the returned batch, then `ack DELIVERY`.

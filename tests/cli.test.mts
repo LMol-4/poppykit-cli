@@ -60,13 +60,13 @@ async function fixture(){
   const key=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);
   const metadata:MetadataResolver={resolveClient:async()=>{throw new Error('unexpected client lookup');},resolveJwks:async()=>{throw new Error('unexpected JWKS lookup');},resolveCompany:async()=>({url:'https://company.example/.well-known/poppy.json',document:doc,authorization})};
   const provider=createProvider({clientId,callbackUrl,jwksUri:'https://identity.example/jwks',clientName:'Generic',store,cipher:createResultCipher(randomBytes(32)),metadata,signer:{kid:'key',publicJwk:()=>publicEcJwk(key.publicKey),sign:async bytes=>new Uint8Array(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},key.privateKey,new Uint8Array(bytes)))},authenticateEnrollment:async request=>request.headers.get('x-human')==='yes'?{subject:'human',allowedCompanies:['company.example']}:null});
-  const sent:unknown[]=[];let loseSend=false,mediated=0;
+  const sent:unknown[]=[];let loseSend=false,unavailable=false,mediated=0;
   const token=(signedIn:boolean,session='session1')=>({access_token:signedIn?'PRIVATE_ACCESS':'PRIVATE_SESSION',token_type:'DPoP',expires_in:300,session_id:session,signed_in:signedIn,scope:signedIn?'poppy:read':'',...(signedIn?{refresh_token:'PRIVATE_ACCOUNT'}:{})});
-  const transport:HttpTransport={async fetch(request){const u=new URL(request.url);if(u.hostname==='identity.example')return provider.handle(request);if(u.pathname==='/.well-known/poppy.json')return Response.json(doc);if(u.pathname==='/.well-known/oauth-authorization-server/issuer')return Response.json(authorization);if(u.pathname==='/token'){const form=new URLSearchParams(await request.text());return Response.json(token(form.get('grant_type')!=='urn:ietf:params:oauth:grant-type:jwt-bearer',form.get('session_id')??'session1'));}if(u.pathname==='/device')return Response.json({device_code:'PRIVATE_DEVICE',user_code:'USER-CODE',verification_uri:'https://company.example/verify',expires_in:600,interval:1});if(u.pathname.startsWith('/mediated')){mediated++;const body=await request.json();if(mediated===1){assert.equal(body.credentials.password,'PRIVATE_PASSWORD');return Response.json({status:'code_required',sign_in_id:'challenge1',code:{sent_to:'email'},expires_at:new Date(Date.now()+600000).toISOString()});}assert.equal(body.code,'PRIVATE_OTP');return Response.json({status:'complete',...token(true)});}if(u.pathname==='/revoke')return new Response(null,{status:200});if(u.pathname.startsWith('/conversations')){if(request.method==='POST'){sent.push(await request.json());if(loseSend){loseSend=false;throw new Error('PRIVATE_FAILURE');}return Response.json({conversation_id:'conversation1',status:'idle',responder:'agent'});}return Response.json({conversation_id:'conversation1',status:'idle',responder:'agent',events:[],cursor:null,has_more:false});}throw new Error('unexpected fixture destination '+request.url);}};
+  const transport:HttpTransport={async fetch(request){const u=new URL(request.url);if(u.hostname==='identity.example')return provider.handle(request);if(u.pathname==='/.well-known/poppy.json')return Response.json(doc);if(u.pathname==='/.well-known/oauth-authorization-server/issuer')return Response.json(authorization);if(u.pathname==='/token'){const form=new URLSearchParams(await request.text());return Response.json(token(form.get('grant_type')!=='urn:ietf:params:oauth:grant-type:jwt-bearer',form.get('session_id')??'session1'));}if(u.pathname==='/device')return Response.json({device_code:'PRIVATE_DEVICE',user_code:'USER-CODE',verification_uri:'https://company.example/verify',expires_in:600,interval:1});if(u.pathname.startsWith('/mediated')){mediated++;const body=await request.json();if(mediated===1){assert.equal(body.credentials.password,'PRIVATE_PASSWORD');return Response.json({status:'code_required',sign_in_id:'challenge1',code:{sent_to:'email'},expires_at:new Date(Date.now()+600000).toISOString()});}assert.equal(body.code,'PRIVATE_OTP');return Response.json({status:'complete',...token(true)});}if(u.pathname==='/revoke')return new Response(null,{status:200});if(u.pathname.startsWith('/conversations')){if(request.method==='POST'){sent.push(await request.json());if(unavailable)return Response.json({error:'PRIVATE_REMOTE_BODY'},{status:503});if(loseSend){loseSend=false;throw new Error('PRIVATE_FAILURE');}return Response.json({conversation_id:'conversation1',status:'idle',responder:'agent'});}return Response.json({conversation_id:'conversation1',status:'idle',responder:'agent',events:[],cursor:null,has_more:false});}throw new Error('unexpected fixture destination '+request.url);}};
   const run=async (args:string[])=>{const r=await main([...args,'--json'],{POPPYKIT_HOME:home},{backend,transport});return {...r,out:reply(r.out)};};
   const ok=async (args:string[])=>{const result=await run(args);assert.equal(result.code,0,JSON.stringify(result.out));assert.equal(typeof result.out,'object');return result.out.result;};
   await ok(['setup','--provider','https://identity.example/v1','--company','company.example']);await ok(['enroll']);
-  return {home,backend,provider,transport,run,ok,sent,secrets,setLoseSend:()=>loseSend=true,close:async()=>{store.close();await rm(home,{recursive:true,force:true});}};
+  return {home,backend,provider,transport,run,ok,sent,secrets,setLoseSend:()=>loseSend=true,setUnavailable:(value:boolean)=>unavailable=value,close:async()=>{store.close();await rm(home,{recursive:true,force:true});}};
 }
 test('offline startup, runtime floor, stable JSON and no secure backend fallback',async()=>{
   assert.equal(runtimeSupported('24.11.9'),false);assert.equal(runtimeSupported('24.12.0'),true);assert.equal(runtimeSupported('25.0.0'),true);
@@ -146,12 +146,26 @@ test('Device and Mediated sign-in restart through SDK lifecycle and trusted inpu
 });
 test('retry preserves exact message identity and refuses profile, enrollment, issuer and endpoint changes',async()=>{
   const f=await fixture();try{
-    await f.ok(['connect']);f.setLoseSend();const failed=await f.run(['start','--text','generic message','--send-operation','saved']);assert.equal(failed.code,1);
+    await f.ok(['connect']);f.setLoseSend();const failed=await f.run(['start','--text','generic message','--send-operation','saved']);assert.equal(failed.code,1);assert.equal(failed.out.toJSON().sendOperation,'saved');assert.match(JSON.stringify(failed.out),/Delivery is unconfirmed/);
     await f.ok(['retry','saved']);assert.equal(f.sent.length,2);assert.deepEqual(f.sent[0],f.sent[1]);
     const state=new State(join(f.home,'cli.sqlite')),p=state.profile();state.update(p,{provider:'https://other.example/v1'});state.close();
     const changed=await f.run(['retry','saved']);assert.equal(changed.code,5);assert.equal(f.sent.length,2);
     const local=new State(join(f.home,'cli.sqlite'));const binding={profileId:p.id,provider:p.provider,installationId:p.installationId,enrollmentRef:p.credentialRef,connectionId:p.connectionId,issuer,endpoint:'https://company.example/conversations',resource:null};
     for(const change of [{profileId:'new'},{installationId:'new'},{enrollmentRef:'new'},{connectionId:'new'},{issuer:'https://evil.example'},{endpoint:'https://evil.example'}])assert.throws(()=>local.prepareRetry('saved',{...binding,...change}),{code:'retry_binding_conflict'});local.close();
+  }finally{await f.close();}
+});
+test('company 503 retains the generated send handle and exact retry without exposing its response',async()=>{
+  const f=await fixture();try{
+    await f.ok(['connect']);f.setUnavailable(true);
+    const failed=await f.run(['start','--text','generic message']),output=failed.out.toJSON();
+    assert.equal(failed.code,1);assert.equal(failed.out.error.code,'company_unavailable');
+    assert.equal(typeof output.sendOperation,'string');assert.ok(typeof output.sendOperation==='string');
+    assert.ok(output.error&&typeof output.error==='object'&&'httpStatus' in output.error);assert.equal(output.error.httpStatus,503);
+    assert.match(JSON.stringify(output),/Delivery is unconfirmed/);assert.match(JSON.stringify(output),/enrollment does not need to be repeated/);assert.ok(!JSON.stringify(output).includes('PRIVATE_'));
+    f.setUnavailable(false);await f.ok(['retry',output.sendOperation]);
+    assert.equal(f.sent.length,2);assert.deepEqual(f.sent[0],f.sent[1]);
+    const invalid=await f.run(['start','--text','generic message','--send-operation','invalid handle']);
+    assert.equal(invalid.out.error.code,'invalid_send_operation');assert.equal(invalid.out.toJSON().sendOperation,undefined);assert.equal(f.sent.length,2);
   }finally{await f.close();}
 });
 test('cancel and backend errors do not expose secrets or raw adapter failures',async()=>{
