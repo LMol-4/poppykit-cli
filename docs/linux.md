@@ -3,7 +3,7 @@
 The 0.3.1 source candidate adds a built-in Linux backend. Publication and a test of
 the integrated browser approval flow are separate release/integration steps.
 
-Use Node **24.12.0+** with its built-in `node:sqlite` enabled, npm, and a normal
+Use **Node 24 >=24.22.1 (24.x only)** with its built-in `node:sqlite` enabled, npm, and a normal
 logged-in desktop user session. Install the distribution package
 providing `/usr/bin/secret-tool`, plus a running Secret Service provider
 (for example GNOME Keyring) on that user's session D-Bus. The default persistent

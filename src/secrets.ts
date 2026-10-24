@@ -2,6 +2,7 @@ import { randomBytes, scryptSync, createCipheriv, createDecipheriv, randomUUID }
 import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
 import { join, isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { publishReference } from './reference.js';
 import type { SecretStore, TrustedInput, IdentitySigner, HttpTransport, AgentBrowserController } from '@poppykit/client';
 
 export class CliFailure extends Error {
@@ -74,8 +75,8 @@ export async function encryptedBackend(directory: string, passphrase: string): P
     const pointer=join(directory,'unlock-check');let ref:string;
     try{ref=await readFile(pointer,'utf8');}
     catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw new CliFailure('secure_store_unavailable',4);const staged=await secrets.stage('poppykit-vault-unlock-v1');
-      try{await writeFile(pointer,staged,{flag:'wx',mode:0o600});ref=staged;}
-      catch(error){await secrets.remove(staged);if((error as NodeJS.ErrnoException).code!=='EEXIST')throw new CliFailure('secure_store_unavailable',4);ref=await readFile(pointer,'utf8');}
+      try{if(await publishReference(directory,'unlock-check',staged))ref=staged;else{await secrets.remove(staged);ref=await readFile(pointer,'utf8');}}
+      catch{await secrets.remove(staged);throw new CliFailure('secure_store_unavailable',4);}
     }
     if(await secrets.read(ref)!=='poppykit-vault-unlock-v1')throw new CliFailure('secure_store_locked',4);
   }, trustedInput: terminalTrustedInput, close() { password.fill(0); } };

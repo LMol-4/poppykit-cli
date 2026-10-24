@@ -54,5 +54,6 @@ coverage/
 /scripts/linux-native-session.mjs
 /scripts/native-smoke.mjs
 /test-support/native-worker.mjs
+/test-support/vault-publication-worker.mjs
 /native/darwin-keychain
 /native/darwin-keychain.json

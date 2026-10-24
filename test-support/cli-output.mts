@@ -18,4 +18,4 @@ export function result(value:unknown){const row=object(value);return {toJSON(){r
  get events(){assert.ok(Array.isArray(row.events));return row.events;},
  get methods(){assert.ok(Array.isArray(row.methods));return row.methods.map(m=>({method:text(object(m).method)}));},
  };}
-export function reply(value:unknown){const row=object(value);return {toJSON(){return row;},get status(){return text(row.status);},get result(){return result(row.result);},get error(){return {code:text(object(row.error).code)};}};}
+export function reply(value:unknown){const row=object(value);return {toJSON(){return row;},get status(){return text(row.status);},get result(){return result(row.result);},get error(){return {code:text(object(row.error).code),get requiredScopes(){return strings(object(row.error).requiredScopes);}};}};}

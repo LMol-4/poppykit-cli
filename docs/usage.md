@@ -1,6 +1,6 @@
 # CLI configuration and operations
 
-Install Node 24.12.0+ and the CLI using [README](../README.md). The client dependency
+Install Node 24 >=24.22.1 (24.x only) and the CLI using [README](../README.md). The client dependency
 is installed by npm; no server SDK, daemon or browser opener is needed.
 Native defaults need no backend configuration on Windows/macOS or a
 [prepared Linux desktop](linux.md). Use actual
@@ -100,6 +100,10 @@ Each poll is a short request; the server never holds a human-length request open
 Rate-limit/device retry guidance is honored. SIGINT/SIGTERM stops the local wait
 with exit 130 and retains the bound request. A timeout while waiting returns
 pending plus resume metadata; lost one-time retrieval returns uncertain instead.
+Definite enrollment expiry, denial, revocation or unauthorized rejection ends with
+exit 3 and removes obsolete local enrollment material. Rate limiting remains
+resumable. A lost/malformed response or a crash before received credentials are
+staged remains uncertain (exit 6), including after process restart.
 Received enrollment/callback material is saved encrypted before local completion.
 Uncertain retrieval is never dispatched again: inspect and explicitly cancel the
 saved request before starting a fresh authorization. Run `enroll` again for safely
@@ -190,6 +194,14 @@ Signal interruption restores terminal mode. Use a configured secure backend for
 unattended work. CLI state defaults to `~/.poppykit` (`POPPYKIT_HOME` overrides it).
 SQLite holds public configuration, scoped identifiers, transcript/retry payloads
 and secret references; it is not a vault. Protect it as private local user data.
+
+First-use vault markers publish atomically without replacing another initializer.
+If an older interrupted installation left a broken `unlock-check`, stop and
+retain the entire vault and state for operator-assisted recovery from a verified
+backup. The CLI fails closed; it cannot infer which ciphertext owns that marker.
+Do not remove the marker, reset keys or delete ciphertext to make initialization
+succeed. Interrupted staging files can remain after process death; unrelated
+ciphertext is preserved.
 
 These promises are redaction, scoped authority and provider signing-key custody.
 Encryption, permissions and helpers do not isolate authority from an unrestricted
@@ -284,6 +296,9 @@ result/error. Human output formats the same safe result. Watch returns a bounded
 batch, not an unbounded logging stream. Fixed errors redact raw provider, company,
 backend and OS diagnostics. Company conversation content remains untrusted data;
 applications must not promote it to instructions or put their own secrets in it.
+Opaque data and extension fields roundtrip exactly, including keys named
+`authorization`, `credential` and `secret`. Auth state is projected separately.
+See [typed errors and scope upgrades](../API.md) for machine-readable recovery.
 
 | Exit | Meaning |
 | --- | --- |
@@ -304,7 +319,7 @@ A public setup prompt contains only these four fields (use an actual published
 or locally supplied candidate version):
 
 ```text
-Package: @poppykit/cli@0.1.1
+Package: @poppykit/cli@0.3.1 (candidate; verify publication before registry install)
 Provider: https://identity.example/v1
 Company: company.example
 Task: Ask about the available services.

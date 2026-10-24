@@ -2,6 +2,13 @@
 
 ## 0.3.1 (unreleased candidate)
 
+- Require patched Node 24 >=24.22.1 within 24.x; reject unsupported majors.
+- Use trusted Windows approval execution and atomic encrypted-vault initialization.
+- Preserve opaque protocol JSON, expose typed scope/retry details and retire
+  terminal approval secrets while keeping uncertain redemption fenced.
+- Distinguish definite enrollment rejection from lost/staging outcomes, and fix
+  source/release subprocess paths containing spaces or Unicode.
+
 - Browser enrollment and direct company consent wait for a committed decision,
   return automatically to the calling agent and retain safe interrupted recovery.
 - Built-in Linux Secret Service wrapping-key custody using libsecret's `secret-tool`,

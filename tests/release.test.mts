@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,writeFile,readFile,rm,access} from 'node:fs/promises';
@@ -46,7 +47,7 @@ test('real candidate checks reject missing artifacts tampering and changed manif
     const output=join(dir,'outputs'),script=new URL('../scripts/release-candidate.mjs',import.meta.url);
     const good=Object.fromEntries(mandatory.map(name=>[name,{result:'success'}]));
     const env={...process.env,GITHUB_SHA:actualCommit,EXPECTED_SHA:actualCommit,RELEASE_VERSION:pkg.version,RELEASE_TAG:'v'+pkg.version,RELEASE_CONTEXT:'false',GITHUB_REPOSITORY:actual.repository,EXPECTED_MANIFEST_SHA:actualSha,NEEDS_JSON:JSON.stringify(good),GITHUB_OUTPUT:output};
-    const gate=async(extra={})=>{await writeFile(output,'');const result=spawnSync(process.execPath,[script.pathname.replace(/^\/(\w:)/,'$1'),'gate',dir],{env:{...env,...extra},encoding:'utf8',windowsHide:true});return {status:result.status,output:await readFile(output,'utf8'),error:result.stderr};};
+    const gate=async(extra={})=>{await writeFile(output,'');const result=spawnSync(process.execPath,[fileURLToPath(script),'gate',dir],{env:{...env,...extra},encoding:'utf8',windowsHide:true});return {status:result.status,output:await readFile(output,'utf8'),error:result.stderr};};
     const passed=await gate();assert.equal(passed.status,0,passed.error);assert.equal(passed.output,'ready=true\n');
     for(const result of ['failure','cancelled','skipped',null]){const value=await gate({NEEDS_JSON:JSON.stringify({...good,contracts:{result}})});assert.notEqual(value.status,0);assert.equal(value.output,'');}
     const missing={...good};delete missing.fast;

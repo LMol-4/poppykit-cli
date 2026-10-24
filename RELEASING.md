@@ -13,7 +13,7 @@ changing runtime APIs. Each new version needs its own source/artifact evidence.
 
 ## Before tagging
 
-- Confirm npm ownership, unused versions, supported Node 24.12.0 and npm>=11.5.1.
+- Confirm npm ownership, unused versions, supported Node 24.22.1 and npm>=11.5.1.
   Keep the pinned compiler/dependencies; do not upgrade tooling during a release.
 - Update version, changelog and shipped docs. CLI's client dependency and both
   candidate JSON files must match exact final SDK versions/full source SHAs.

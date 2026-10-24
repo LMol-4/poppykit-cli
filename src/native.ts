@@ -1,20 +1,15 @@
-import { randomBytes, randomUUID } from 'node:crypto';
-import { lstat, mkdir, readFile, realpath, open, link, unlink, access } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { lstat, mkdir, readFile, realpath, access } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { encryptedBackend, hiddenInput, CliFailure, type SecureBackend } from './secrets.js';
 import { windowsBackend } from './windows.js';
 import { macosKeyStore } from './macos.js';
 import { linuxKeyStore } from './linux.js';
+import { publishReference } from './reference.js';
 
 export interface NativeKeyStore { load(): Promise<string | null>; adopt(value: string): Promise<string> }
 export async function publishNativeReference(directory: string, ref: string): Promise<boolean> {
-  const temporary = join(directory, 'native-unlock-' + randomUUID() + '.tmp');
-  try {
-    const file = await open(temporary, 'wx', 0o600);
-    try { await file.writeFile(ref, 'utf8'); await file.sync(); } finally { await file.close(); }
-    try { await link(temporary, join(directory, 'native-unlock')); return true; }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false; throw error; }
-  } finally { await unlink(temporary).catch(() => {}); }
+  return publishReference(directory, 'native-unlock', ref);
 }
 async function exists(path: string) { try { await access(path); return true; } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; } }
 async function directoryPath(directory: string): Promise<string> {

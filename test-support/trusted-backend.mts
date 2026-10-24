@@ -7,6 +7,13 @@ function environment(name:string){const value=process.env[name];assert.ok(value,
 export async function open():Promise<SecureBackend>{
   if(process.env.FIXTURE_BACKEND_FAIL)throw new Error('PRIVATE_BACKEND_FAILURE');
   const backend=await encryptedBackend(environment('FIXTURE_SECRET_DIRECTORY'),environment('FIXTURE_UNLOCK'));
+  const stage=backend.secrets.stage;
+  let readyReceived=false;
+  backend.secrets.stage=async value=>{
+    if(value.startsWith('{"status":"ready"')){readyReceived=true;if(process.env.FIXTURE_RESULT_CRASH)process.exit(91);}
+    else if(readyReceived&&process.env.FIXTURE_FINAL_STAGE_FAIL)throw new Error('PRIVATE_FINAL_STAGE_FAILURE');
+    return stage(value);
+  };
   backend.enrollmentAuth=async()=>({'x-operator-auth':'fixture-only'});
   backend.trustedInput={async collect(request):Promise<Record<string,string>>{return request.challenge?{code:'123456'}:{password:'PRIVATE_PASSWORD'};}};
   const transport:NonNullable<SecureBackend['transport']>={async fetch(request){

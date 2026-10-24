@@ -13,7 +13,8 @@ The browser-wait changes are also unreleased: check installed help for `auth-wai
 agent automatically. See [bounded waits and recovery](docs/usage.md); a terminated
 agent needs a new invocation to resume its saved request.
 
-Requires Node **24.12.0+** and npm on Windows, macOS or Linux. CI tests Node 24.12.0;
+Requires **Node 24, version 24.22.1 or later within 24.x**, and npm on Windows,
+macOS or Linux. Verification workflows pin Node 24.22.1;
 later majors are not separately certified. Windows default custody uses its bundled
 hidden PowerShell/DPAPI helper. macOS uses Keychain through a bundled universal
 native helper; users do not need a compiler or Xcode installation. Linux uses
@@ -52,6 +53,13 @@ locally selected secure-backend module. Attended commands can explicitly use
 `--unlock` in a real terminal. There is no plaintext fallback.
 SQLite state is not a vault, and arbitrary same-user execution is not isolated.
 Inspect uncertain outcomes before retrying; cancellation cannot undo a sent action.
+
+JSON scope failures include `error.requiredScopes`. Request those scopes through
+`auth-start`, obtain explicit human consent, then `retry` the saved `sendOperation`
+in its original conversation. Denial preserves earlier grants. `read` and `watch`
+preserve structured company data and extension fields exactly; credential-like
+business field names are valid data. Auth results expose public connection and
+operation fields; raw provider/OS errors remain private.
 
 ## Guides
 
