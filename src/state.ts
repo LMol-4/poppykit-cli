@@ -13,6 +13,19 @@ export class State {
   remove(kind: string, id: string) { this.db.prepare('DELETE FROM cli_records WHERE kind=? AND id=?').run(kind, id); }
   list<T>(kind: string): { id: string; value: T }[] { return this.db.prepare('SELECT id,body FROM cli_records WHERE kind=? ORDER BY id LIMIT 1000').all(kind).map(row => ({ id: row.id as string, value: JSON.parse(row.body as string) })); }
   atomic<T>(action: () => T): T { this.db.exec('BEGIN IMMEDIATE'); try { const value = action(); this.db.exec('COMMIT'); return value; } catch (error) { this.db.exec('ROLLBACK'); throw error; } }
+  claimApproval(id: string): () => void {
+    const token = randomUUID();
+    this.atomic(() => {
+      const owner = this.get<{pid:number}>('approval-owner',id);
+      if (owner) {
+        let alive = true;
+        try { process.kill(owner.pid,0); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') alive = false; }
+        if (alive) throw new CliFailure('approval_in_use',5);
+      }
+      this.put('approval-owner',id,{pid:process.pid,token});
+    });
+    return () => this.atomic(() => { if (this.get<{token:string}>('approval-owner',id)?.token === token) this.remove('approval-owner',id); });
+  }
   profile(name?: string): Profile {
     const rows = this.list<Profile>('profile'); const found = name ? rows.find(row => row.id === name)?.value : rows.length === 1 ? rows[0]?.value : undefined;
     if (!found) throw new CliFailure('select_profile_with_--profile', 2); return found;
