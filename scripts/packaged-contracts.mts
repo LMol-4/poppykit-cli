@@ -13,7 +13,7 @@ export async function validateContents(directory:string,manifest:{files:string[]
     for(const entry of await readdir(join(directory,relative),{withFileTypes:true})){
       const path=(relative?relative+'/':'')+entry.name;
       assert.ok(!entry.isSymbolicLink(),'package contains a symlink');
-      const allowed=path==='package.json'||/^LICENSE(?:\.[\w-]+)?$/i.test(path)||manifest.files.some(prefix=>path===prefix||path.startsWith(prefix+'/'));
+      const allowed=path==='package.json'||/^LICENSE(?:\.[\w-]+)?$/i.test(path)||manifest.files.some(prefix=>path===prefix||path.startsWith(prefix+'/')||entry.isDirectory()&&prefix.startsWith(path+'/'));
       assert.ok(allowed,'unexpected package path: '+path);
       assert.ok(!/(?:^|\/)(?:tests?|test-support|fixtures?)(?:\/|$)/i.test(path),'test fixture in package: '+path);
       assert.ok(!/(?:^|\/)(?:\.env(?:\..*)?|[^/]+\.(?:pem|key|sqlite|db|log|tgz))$/i.test(path),'private/state file in package: '+path);
