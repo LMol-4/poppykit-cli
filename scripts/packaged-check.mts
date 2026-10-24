@@ -105,6 +105,8 @@ try{
   await new Promise<void>((resolve,reject)=>{const bin=join(project,'node_modules/.bin',process.platform==='win32'?'poppykit.cmd':'poppykit');const child=process.platform==='win32'?spawn(process.env.ComSpec??'cmd.exe',['/d','/s','/c',`""${bin}" --help"`],{env:{...process.env,PATH:join(process.execPath,'..')+delimiter+(process.env.PATH??'')},windowsHide:true,windowsVerbatimArguments:true}):spawn(bin,['--help'],{env:{...process.env,PATH:join(process.execPath,'..')+delimiter+(process.env.PATH??'')}});let out='',errors='';child.stdout.on('data',d=>out+=d);child.stderr.on('data',d=>errors+=d);child.on('error',reject);child.on('close',code=>{try{assert.equal(code,0,errors);assert.match(out,/Usage: poppykit/);resolve();}catch(e){reject(e);}});});
   assert.equal((await run(['setup','--profile','insecure','--provider','http://identity.example/v1','--company',companies[0].domain])).code,2);
   await ok(['setup','--profile','direct','--provider',providerUrl,'--company',companies[0].domain]);
+  // Native custody is checked separately against a disposable Keychain, never the runner's login vault.
+  if(process.platform==='darwin')await ok(['backend','--module',join(project,'missing-backend.mjs')]);
   assert.equal((await run(['enroll'])).code,4);assert.equal((await run(['enroll','--unlock'])).json.error.code,'trusted_terminal_required');
   await ok(['backend','--module',backendFile]);await ok(['enroll']);await ok(['connect']);
   const requested=['--scope','poppy:read','--scope','record:view','--scope','record:edit'];

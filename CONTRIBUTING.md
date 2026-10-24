@@ -9,6 +9,14 @@ Use Node 24.12.0, TypeScript 5.9.3 and @types/node 24.10.0.
 Install the exact client candidate tarball plus the pinned dev tools; CI reads full
 SDK SHAs/versions from .github/*-candidate.json. No sibling checkout is required.
 
+CI first builds the universal macOS Keychain helper on a macOS runner using its
+installed Apple toolchain. `scripts/build-native.mjs` signs ad-hoc, verifies both
+architectures and the 11.0 deployment target, and records source/binary hashes.
+`scripts/check-native.mjs` binds those bytes to this checkout before Linux packs
+them. Users never compile at installation. Packaged Windows/macOS jobs exercise
+the exact tarball, synthetic credentials and a disposable Keychain. Actual human
+upgrade approval remains a separate check, never inferred from fixture tests.
+
 ```sh
 npm run typecheck
 npm run build

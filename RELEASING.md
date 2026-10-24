@@ -1,5 +1,12 @@
 # Releasing
 
+CLI 0.3.1 adds a universal native macOS helper. The existing verification workflow
+builds/signs it in the `native-build` job, validates source/binary hashes before
+candidate packing, and tests the same tarball's helper on macOS. Both architectures
+and deployment target are inspected. Preserve this artifact path; do not rebuild
+or substitute the helper at publication. OS upgrade access approval may be needed
+with ad-hoc signing. No Apple signing identity/notarization is assumed.
+
 Use the tagged GitHub Actions workflow, not a local rebuild. Packages are MIT;
 0.1.0 was manually bootstrapped. Version 0.1.1 refreshes documentation without
 changing runtime APIs. Each new version needs its own source/artifact evidence.

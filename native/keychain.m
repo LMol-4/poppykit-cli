@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import <Security/Security.h>
+#include <stdio.h>
 
 static NSDictionary *failure(NSString *phase, OSStatus status) {
   BOOL locked = status == errSecInteractionNotAllowed || status == errSecAuthFailed || status == errSecUserCanceled;

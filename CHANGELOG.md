@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.1 (unreleased candidate)
+
+Add automatic macOS Keychain custody through a bundled universal native helper,
+and explicit single-unlock adoption of existing attended storage on Mac/Windows.
+Migration preserves ciphertext/references and recovers interrupted publication.
+Repeated successful enrollment retrieval now succeeds locally without redeeming
+again. Pin client 0.3.1 for bounded assertion clock tolerance and safe actionable
+provider diagnostics. Windows DPAPI files receive explicit owner-only ACLs.
+
 ## 0.3.0 (release candidate)
 
 Add browser enrollment start/status/cancel with private verifier custody, atomic

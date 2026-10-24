@@ -1,6 +1,6 @@
 {
   "name": "@poppykit/cli",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": false,
   "description": "Cross-platform Personal Agent Protocol CLI",
   "repository": {
@@ -27,6 +27,8 @@
   },
   "files": [
     "dist",
+    "native/darwin-keychain",
+    "native/darwin-keychain.json",
     "README.md",
     "API.md",
     "CONTRIBUTING.md",
@@ -46,7 +48,7 @@
     "poppykit": "dist/cli.js"
   },
   "dependencies": {
-    "@poppykit/client": "0.3.0"
+    "@poppykit/client": "0.3.1"
   },
   "license": "MIT",
   "publishConfig": {

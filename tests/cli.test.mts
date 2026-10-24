@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { main, runtimeSupported } from '../dist/cli.js';
 import { encryptedBackend, openBackend } from '../dist/secrets.js';
-import { nativeBackend, migrateNativeStorage } from '../dist/native.js';
+import { nativeBackend, migrateNativeStorage, publishNativeReference } from '../dist/native.js';
 import { State } from '../dist/state.js';
 import { createProvider, createResultCipher } from '@poppykit/client/provider';
 import { SqliteProviderStore } from '@poppykit/client/provider/sqlite';
@@ -112,6 +112,18 @@ test('native fresh vault uses a single custody key across concurrent opens',asyn
   const home=await mkdtemp(join(tmpdir(),'native concurrent ü ')),directory=join(home,'vault');let saved:string|null=null;
   const keys={async load(){return saved;},async adopt(value:string){return saved??=value;}};
   try{const [a,b]=await Promise.all([nativeBackend(directory,keys),nativeBackend(directory,keys)]);const ref=await a.secrets.stage('PRIVATE_NATIVE_SECRET');assert.equal(await b.secrets.read(ref),'PRIVATE_NATIVE_SECRET');await a.close?.();await b.close?.();}finally{await rm(home,{recursive:true,force:true});}
+});
+
+test('native reference publication survives a partial staging file and keeps one complete concurrent winner',async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'native pointer ü ')),a=randomUUID(),b=randomUUID();
+  try{
+    const abandoned=join(directory,'native-unlock-interrupted.tmp');await writeFile(abandoned,a.slice(0,7),{flag:'wx'});
+    const outcomes=await Promise.all([publishNativeReference(directory,a),publishNativeReference(directory,b)]);
+    assert.equal(outcomes.filter(Boolean).length,1);
+    const winner=await readFile(join(directory,'native-unlock'),'utf8');assert.equal(winner.length,36);assert.equal(winner,outcomes[0]?a:b);
+    assert.equal(await publishNativeReference(directory,randomUUID()),false);assert.equal(await readFile(join(directory,'native-unlock'),'utf8'),winner);
+    assert.equal(await readFile(abandoned,'utf8'),a.slice(0,7));assert.equal((await readdir(directory)).length,2,'only the old abandoned staging file remains');
+  }finally{await rm(directory,{recursive:true,force:true});}
 });
 test('Direct enrollment, callback, restart completion and sign-out redact all credentials',async()=>{
   const f=await fixture();try{

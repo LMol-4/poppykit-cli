@@ -2,10 +2,12 @@
 
 Install Node 24.12.0+ and the CLI using [README](../README.md). The client dependency
 is installed by npm; no server SDK, daemon or browser opener is needed.
-Use actual configured provider/company URLs and a trusted local backend:
+Native defaults need no backend configuration on Windows/macOS. Use actual
+provider/company URLs; configure a module only for a custom backend:
 
 ```sh
 poppykit setup --provider https://identity.example/v1 --company company.example --profile work --json
+# Custom backend only (required for unattended Linux):
 poppykit backend --module /absolute/path/to/operator-backend.mjs --json
 poppykit enroll --profile work --json
 poppykit connect --profile work --json
@@ -27,11 +29,45 @@ separately configured backend. Export/retain needed records before manual reset.
 
 ## Secure storage and trusted input
 
+This document describes the unreleased0.3.1 candidate. Check the published version
+and installed help before using its new Mac/default-storage or migration commands.
+
 Windows defaults to current-user DPAPI through a hidden noninteractive PowerShell
 helper, with material sent over internal stdin/stdout pipes. Immutable ciphertext
 files have user-only ACLs, verified on every access. Missing user profile/DPAPI,
 unsafe ACLs, reparse points or tampered files fail closed. DPAPI protects storage
 at rest; arbitrary code running as the same Windows user can decrypt it.
+
+CLI 0.3.1+ automatically uses the default macOS Keychain to protect a random
+wrapping key for the AES-256-GCM local ciphertext vault. The bundled universal
+arm64/x86_64 Security.framework helper receives secrets through private pipes;
+no compiler, Xcode, daemon, per-command passphrase or visitor-written adapter is
+needed. Its deployment target is macOS 11.0; Node may require a newer OS.
+Same-user programs are not isolated. Custody is scoped to the canonical absolute
+vault path: moving ciphertext alone is not a backup or migration. Recovery needs
+the matching OS vault and original path. Do not delete records or re-enroll as a
+substitute for recovering local storage.
+
+Locked/inaccessible Keychains fail closed. Ad-hoc signing preserves normal OS
+access checks, so upgrading helper bytes can require one-time reauthorization.
+Run `poppykit storage migrate` in a real terminal to permit the OS approval dialog,
+or review access in Keychain Access, then retry the agent command. Routine commands
+never open that dialog or weaken the Keychain ACL. This is separate from website
+enrollment/company consent and from the attended vault passphrase.
+
+To adopt existing `--unlock` storage on Windows or macOS:
+
+```sh
+poppykit storage migrate --json
+```
+
+Enter the existing passphrase once in its hidden real-terminal prompt. It is
+never an argument, environment variable or JSON result. The old vault is verified
+before native key custody changes; ciphertext, secret references, profiles,
+enrollment, conversations and approvals are preserved. An interrupted migration
+is safe to repeat; successful repeats need no passphrase. Wrong unlock leaves
+custody unchanged. Then omit `--unlock`. Custom backends remain explicitly selected
+and are not migrated. CLI 0.3.0 lacks this command and native Mac support.
 
 For a provider offering the optional browser-enrollment service:
 
@@ -46,11 +82,20 @@ poppykit discovery --json
 
 The CLI stages a private verifier before starting enrollment. Public browser links
 and request IDs grant no authority. `enroll-status` redeems once and stages the
-credential before binding the local profile. Poll at least two seconds apart.
+credential before binding the local profile. Repeating a successful retrieval
+checks its saved local binding/secret and succeeds without redeeming again; it
+does not attest remote authority or undo revocation. Poll pending retrievals at least two seconds apart.
 `enroll-cancel` revokes a pending/delivered enrollment if delivery failed; an
 uncertain/lost retrieval requires fresh enrollment. Company read/write consent is
 a subsequent `auth-start` operation. Provider revocation stops signing; use company
 revocation separately for issued grants. Credentials never belong in agent chat.
+
+Safe provider errors distinguish clock/expiry (check automatic date/time),
+enrollment rejection, rate limits, connectivity, malformed responses and server
+unavailability. Fixed `error.nextAction` explains recovery without remote text.
+Report the command, safe code and approximate UTC time. The CLI `requestId` is
+local invocation correlation, not a Vercel request ID. Never share assertions,
+credentials, passphrases or your local vault files with an error report.
 
 Other unattended operation requires an explicit secure backend and a successful health
 check; missing, locked, unavailable or malformed backends fail with exit **4**.

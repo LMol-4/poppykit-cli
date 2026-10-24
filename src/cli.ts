@@ -302,7 +302,8 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       provider_network_error: 'Could not complete a secure provider request. Check connectivity and retry.',
       provider_invalid_response: 'The provider returned an invalid response. Report the command, error code and approximate UTC time; do not share credentials.',
       provider_unavailable: 'The provider could not complete this request. Report the command, error code and approximate UTC time.',
-      secure_store_locked: 'Unlock your OS vault, or use the correct attended passphrase. Do not put credentials in chat.',
+      secure_store_locked: process.platform === 'darwin' ? 'Unlock your Keychain. After a CLI upgrade, run poppykit storage migrate in your own terminal to permit one-time OS access approval, then retry without --unlock. Never send credentials in chat.' : 'Unlock your OS vault, or use the correct attended passphrase. Do not put credentials in chat.',
+      native_helper_unavailable: 'Reinstall the published CLI package; its bundled native helper is missing or failed its integrity check. Do not download a helper from company metadata.',
     };
     return {out:{version:1,command,status:'error',requestId,error:{code,...(hints[code]?{nextAction:hints[code]}:{})}},code:abort.signal.aborted?130:known?error.exitCode:code==='consumed'?6:code==='binding_conflict'?5:['trusted_input_required','provider_unavailable','secure_store_locked','secure_store_unavailable'].includes(code)?4:['sign_in_required','insufficient_scope','unauthorized','invalid_grant','provider_unauthorized'].includes(code)?3:1};
   } finally { process.off('SIGINT',canceled);process.off('SIGTERM',canceled);for(const dispose of [()=>authStore?.close(),()=>conversationStore?.close(),()=>transport?.close?.(),()=>backend?.close?.(),()=>state?.close()])try{await dispose();}catch{/* Cleanup adapters cannot expose private errors. */} }

@@ -30,7 +30,26 @@ env:
   RELEASE_TAG: ${{ inputs.tag }}
   EXPECTED_SHA: ${{ inputs.expected-sha }}
 jobs:
+  native-build:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.12.0'
+      - run: node scripts/build-native.mjs
+      - run: node scripts/check-native.mjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-keychain
+          path: native/darwin-keychain*
+          if-no-files-found: error
+          retention-days: 14
   candidate:
+    needs: native-build
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -47,6 +66,11 @@ jobs:
           node-version: '24.12.0'
       - id: pins
         run: node scripts/candidate-pins.mjs
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: native-keychain
+          path: native
+      - run: node scripts/check-native.mjs
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: ${{ steps.pins.outputs.client-repository }}
@@ -260,6 +284,7 @@ jobs:
       - run: node scripts/packaged-check.mjs ".candidate/artifacts/clean install ü" 2>&1 | tee .candidate/packaged.log
         env:
           POPPYKIT_TEST_PROVIDER_ORIGIN: https://operator-secondary.example
+      - run: node scripts/native-smoke.mjs ".candidate/artifacts/clean install ü/node_modules/@poppykit/cli"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: failure()
         with:
@@ -294,6 +319,7 @@ jobs:
       - run: node scripts/packaged-check.mjs ".candidate/artifacts/clean install ü" 2>&1 | tee .candidate/packaged.log
         env:
           POPPYKIT_TEST_PROVIDER_ORIGIN: https://operator-secondary.example
+      - run: node scripts/native-smoke.mjs ".candidate/artifacts/clean install ü/node_modules/@poppykit/cli"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: failure()
         with:

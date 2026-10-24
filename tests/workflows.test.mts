@@ -24,4 +24,6 @@ test('actual workflow wiring keeps reporting and publication separate',async()=>
  assert.ok(release.includes('publish-check'));assert.ok(release.includes('--ignore-scripts'));assert.ok(release.includes('--provenance'));
  assert.ok(!release.includes('npm run build'));assert.ok(!release.includes('npm install'));assert.ok(!release.includes('npm pack'));
  assert.ok(!verify.includes('paths:'));assert.ok(!ci.includes('paths:'));
+ assert.ok(verify.includes('    needs: native-build')&&verify.includes('node scripts/check-native.mjs'),'candidate requires source-bound native helper');
+ for(const job of ['packaged-windows','packaged-macos'])assert.ok(verify.slice(verify.indexOf('  '+job+':')).split(/\n  [a-z][a-z-]+:/)[0].includes('node scripts/native-smoke.mjs'),'native custody missing from '+job);
 });
