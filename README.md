@@ -6,9 +6,9 @@ or use verified integration hooks. [MIT](LICENSE).
 
 ## Install
 
-Version 0.3.1 is an unreleased candidate until its publishing workflow completes.
-Native macOS custody and storage migration below require 0.3.1; they are absent in 0.3.0.
-The browser-wait changes are also unreleased: check installed help for `auth-wait`.
+This guide targets version 0.4.0. Verify its registry publication before installing;
+older releases lack the repaired browser-wait and native-custody journey.
+Check installed help for `auth-wait`.
 `enroll` and `auth-start` wait for browser decisions and return to a running calling
 agent automatically. See [bounded waits and recovery](docs/usage.md); a terminated
 agent needs a new invocation to resume its saved request.
@@ -25,7 +25,7 @@ automatic browser opener is required. npm installs the exact client dependency;
 there is no server SDK dependency and Node is not bundled.
 
 ```sh
-npm install --global @poppykit/cli@0.3.1
+npm install --global @poppykit/cli@0.4.0
 ```
 
 ## Start offline

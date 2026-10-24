@@ -1,6 +1,6 @@
 {
   "name": "@poppykit/cli",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "private": false,
   "description": "Cross-platform Personal Agent Protocol CLI",
   "repository": {
@@ -48,7 +48,7 @@
     "poppykit": "dist/cli.js"
   },
   "dependencies": {
-    "@poppykit/client": "0.3.1"
+    "@poppykit/client": "0.4.0"
   },
   "license": "MIT",
   "publishConfig": {

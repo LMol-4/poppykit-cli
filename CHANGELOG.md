@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.1 (unreleased candidate)
+## 0.4.0
 
 - Require patched Node 24 >=24.22.1 within 24.x; reject unsupported majors.
 - Use trusted Windows approval execution and atomic encrypted-vault initialization.
@@ -20,10 +20,13 @@ Add automatic macOS Keychain custody through a bundled universal native helper,
 and explicit single-unlock adoption of existing attended storage on Mac/Windows.
 Migration preserves ciphertext/references and recovers interrupted publication.
 Repeated successful enrollment retrieval now succeeds locally without redeeming
-again. Pin client 0.3.1 for bounded assertion clock tolerance and safe actionable
-provider diagnostics. Windows DPAPI files receive explicit owner-only ACLs.
+again. Pin client 0.4.0 for corrected callbacks, bounded assertion clock tolerance
+and safe actionable provider diagnostics. Windows DPAPI files receive explicit owner-only ACLs.
 Company HTTP 5xx failures now expose a fixed availability diagnostic and retain
 the saved send handle, with guidance to retry the same message after recovery.
+Opaque protocol data stays inside `result`; CLI delivery and retry controls are
+top-level fields. Callers must use the documented envelope rather than reading
+control-shaped keys from protocol results.
 
 ## 0.3.0 (release candidate)
 
