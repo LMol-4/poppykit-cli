@@ -2,12 +2,13 @@
 
 Install Node 24.12.0+ and the CLI using [README](../README.md). The client dependency
 is installed by npm; no server SDK, daemon or browser opener is needed.
-Native defaults need no backend configuration on Windows/macOS. Use actual
+Native defaults need no backend configuration on Windows/macOS or a
+[prepared Linux desktop](linux.md). Use actual
 provider/company URLs; configure a module only for a custom backend:
 
 ```sh
 poppykit setup --provider https://identity.example/v1 --company company.example --profile work --json
-# Custom backend only (required for unattended Linux):
+# Optional custom backend only:
 poppykit backend --module /absolute/path/to/operator-backend.mjs --json
 poppykit enroll --profile work --json
 poppykit connect --profile work --json
@@ -30,7 +31,11 @@ separately configured backend. Export/retain needed records before manual reset.
 ## Secure storage and trusted input
 
 This document describes the unreleased0.3.1 candidate. Check the published version
-and installed help before using its new Mac/default-storage or migration commands.
+and installed help before using its new native-storage or migration commands.
+
+Linux uses the standard Secret Service through `/usr/bin/secret-tool` and the
+user's unlocked persistent desktop keyring. See [Linux](linux.md) for distro
+prerequisites, custody/concurrency, safe diagnostics and honest SSH/headless limits.
 
 Windows defaults to current-user DPAPI through a hidden noninteractive PowerShell
 helper, with material sent over internal stdin/stdout pipes. Immutable ciphertext
@@ -55,7 +60,7 @@ or review access in Keychain Access, then retry the agent command. Routine comma
 never open that dialog or weaken the Keychain ACL. This is separate from website
 enrollment/company consent and from the attended vault passphrase.
 
-To adopt existing `--unlock` storage on Windows or macOS:
+To adopt existing `--unlock` storage on Windows, macOS or Linux:
 
 ```sh
 poppykit storage migrate --json

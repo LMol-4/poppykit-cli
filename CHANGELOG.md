@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased Linux custody
+
+- Built-in Linux Secret Service wrapping-key custody using libsecret's `secret-tool`,
+  atomic references across processes, existing-vault migration and safe failures.
+- Isolated real Linux keyring/package CI alongside Windows/macOS native checks;
+  [desktop prerequisites and headless limits](docs/linux.md) are explicit.
+
 ## 0.3.1 (unreleased candidate)
 
 Add automatic macOS Keychain custody through a bundled universal native helper,

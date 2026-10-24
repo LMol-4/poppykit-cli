@@ -85,7 +85,7 @@ export async function openBackend(input: { module?: string; unlock?: boolean; di
   try {
     if (input.unlock) backend = await encryptedBackend(input.directory, await hiddenInput('Unlock encrypted PoppyKit storage (12+ characters)'));
     else {
-      if (!input.module && ['win32', 'darwin'].includes(process.platform)) {
+      if (!input.module && ['win32', 'darwin', 'linux'].includes(process.platform)) {
         backend = await (await import('./native.js')).nativeBackend(input.directory);
         await backend.healthCheck(); return backend;
       }

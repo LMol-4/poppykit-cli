@@ -4,6 +4,7 @@ import { isAbsolute, join } from 'node:path';
 import { encryptedBackend, hiddenInput, CliFailure, type SecureBackend } from './secrets.js';
 import { windowsBackend } from './windows.js';
 import { macosKeyStore } from './macos.js';
+import { linuxKeyStore } from './linux.js';
 
 export interface NativeKeyStore { load(): Promise<string | null>; adopt(value: string): Promise<string> }
 export async function publishNativeReference(directory: string, ref: string): Promise<boolean> {
@@ -44,8 +45,8 @@ async function stores(directory: string, testKeys?: NativeKeyStore, interactive 
   const windows = process.platform === 'win32' && !testKeys ? await windowsBackend(directory) : undefined;
   if (windows && !await exists(join(directory, 'unlock-check'))) await windows.healthCheck();
   const path = await directoryPath(directory);
-  if (!testKeys && !windows && process.platform !== 'darwin') throw new CliFailure('secure_backend_required', 4);
-  return { path, windows, keys: testKeys ?? (windows ? windowsKeyStore(join(path, 'native-keys')) : macosKeyStore(path, interactive)) };
+  if (!testKeys && !windows && !['darwin', 'linux'].includes(process.platform)) throw new CliFailure('secure_backend_required', 4);
+  return { path, windows, keys: testKeys ?? (windows ? windowsKeyStore(join(path, 'native-keys')) : process.platform === 'linux' ? linuxKeyStore(path) : macosKeyStore(path, interactive)) };
 }
 async function opened(path: string, key: string, windows?: SecureBackend): Promise<SecureBackend> {
   const encrypted = await encryptedBackend(path, key);

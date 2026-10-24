@@ -2,7 +2,8 @@
   "unit": [
     "tests/candidate.test.mts",
     "tests/packaged-contracts.test.mts",
-    "tests/license.test.mts"
+    "tests/license.test.mts",
+    "tests/linux.test.mts"
   ],
   "contracts": [
     "tests/cli.test.mts"

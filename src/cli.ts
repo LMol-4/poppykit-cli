@@ -12,7 +12,7 @@ import type { SecureBackend } from './secrets.js';
 import type { ClientAuth, HttpTransport } from '@poppykit/client';
 
 export const HELP = `Usage: poppykit <command> [--json] [--profile NAME] [--unlock]
-Node >=24.12.0. Direct SDK execution; no daemon. Native Windows DPAPI/macOS Keychain custody.
+Node >=24.12.0. Direct SDK execution; no daemon. Native Windows DPAPI/macOS Keychain/Linux Secret Service custody.
   setup --provider HTTPS_URL --company DOMAIN [--enrollment HTTPS_URL] [--profile NAME]
   backend --module ABSOLUTE_TRUSTED_MODULE
   storage migrate                 adopt attended storage into the native vault
@@ -31,7 +31,9 @@ Node >=24.12.0. Direct SDK execution; no daemon. Native Windows DPAPI/macOS Keyc
   api-request --api DISCOVERED_URL --destination VERIFIED_URL [--method GET]
   browser-join --return-to HTTPS_URL | feedback --task TASK --description TEXT
   diagnostics | enrollment-revoke
-Windows uses current-user DPAPI and macOS uses Keychain by default. Other unattended use requires a configured secure backend. --unlock explicitly uses
+Windows uses current-user DPAPI, macOS uses Keychain and Linux uses Secret Service by default.
+Linux requires secret-tool (libsecret-tools on Ubuntu/Debian) and an unlocked desktop keyring/session bus.
+Other unattended use requires a configured secure backend. --unlock explicitly uses
 attended encrypted storage with a hidden terminal passphrase each invocation.
 Exit: 0 complete/pending, 1 runtime/remote, 2 usage, 3 authorization, 4 secure
 backend/trusted input unavailable, 5 binding conflict, 6 uncertain, 130 canceled.
@@ -91,7 +93,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
     if (command === 'storage') {
       need(1); if (pos[0] !== 'migrate' || v.unlock) fail('usage_storage_migrate');
       if (state.get('config','backend')) fail('native_migration_requires_default_backend', 5);
-      if (!['win32','darwin'].includes(process.platform)) fail('secure_backend_required', 4);
+      if (!['win32','darwin','linux'].includes(process.platform)) fail('secure_backend_required', 4);
       await (await import('./native.js')).migrateNativeStorage(join(home, 'encrypted-secrets'));
       return reply({ migrated: true, nextAction: 'Run subsequent commands without --unlock. Existing profiles and approvals are preserved.' });
     }
@@ -100,7 +102,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       if (pos[0] === 'remove' && pos.length === 2) { state.remove('profile', pos[1]); return reply({ removed: pos[1], notice: 'Local profile removed; remote authorization and backend secrets require explicit cleanup' }); }
       return fail('profile_list_or_remove_required');
     }
-    if (command === 'diagnostics') { need(0); const custom = !!state.get('config','backend'); return reply({ node: process.versions.node, platform: process.platform, storage: home, secureBackendConfigured: custom, defaultSecureBackend: custom ? 'custom' : process.platform === 'win32' ? 'windows-dpapi' : process.platform === 'darwin' ? 'macos-keychain' : 'none', secureBackendAvailability: 'not-probed', headless: !process.stdin.isTTY, execution: 'direct-sdk', browserOpening: 'manual-link' }); }
+    if (command === 'diagnostics') { need(0); const custom = !!state.get('config','backend'); return reply({ node: process.versions.node, platform: process.platform, storage: home, secureBackendConfigured: custom, defaultSecureBackend: custom ? 'custom' : process.platform === 'win32' ? 'windows-dpapi' : process.platform === 'darwin' ? 'macos-keychain' : process.platform === 'linux' ? 'linux-secret-service' : 'none', secureBackendAvailability: 'not-probed', ...(process.platform === 'linux' ? { linuxPrerequisites: await (await import('./linux.js')).linuxStorageDiagnostics() } : {}), headless: !process.stdin.isTTY, execution: 'direct-sdk', browserOpening: 'manual-link' }); }
     if (command === 'retry-remove') {
       need(1);const row=state.get<any>('retry',pos[0]);if(!row)fail('unknown_retry');
       const {SqliteConversationStore}=await import('@poppykit/client/sqlite');const store=new SqliteConversationStore(join(home,'conversations.sqlite'));
@@ -305,6 +307,8 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       provider_unavailable: 'The provider could not complete this request. Report the command, error code and approximate UTC time.',
       secure_store_locked: process.platform === 'darwin' ? 'Unlock your Keychain. After a CLI upgrade, run poppykit storage migrate in your own terminal to permit one-time OS access approval, then retry without --unlock. Never send credentials in chat.' : 'Unlock your OS vault, or use the correct attended passphrase. Do not put credentials in chat.',
       native_helper_unavailable: 'Reinstall the published CLI package; its bundled native helper is missing or failed its integrity check. Do not download a helper from company metadata.',
+      linux_secret_tool_missing: 'Install your distribution package providing /usr/bin/secret-tool (libsecret-tools on Ubuntu/Debian; libsecret on Fedora/Arch), then retry as your desktop user without sudo.',
+      linux_secret_service_unavailable: 'Use your own live desktop session bus and unlock the original default Secret Service keyring, then retry without sudo. Headless/SSH sessions may lack that access. Do not delete the vault or share credentials in chat.',
       company_unavailable: 'The company service is unavailable or paused. Ask its operator to check availability before retrying; enrollment does not need to be repeated.',
     };
     const nextAction=[hints[code],retryHandle?'Delivery is unconfirmed. Keep this sendOperation and use retry with the same handle when ready; do not create a replacement message.':undefined].filter(Boolean).join(' ');

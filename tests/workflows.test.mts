@@ -26,4 +26,6 @@ test('actual workflow wiring keeps reporting and publication separate',async()=>
  assert.ok(!verify.includes('paths:'));assert.ok(!ci.includes('paths:'));
  assert.ok(verify.includes('    needs: native-build')&&verify.includes('node scripts/check-native.mjs'),'candidate requires source-bound native helper');
  for(const job of ['packaged-windows','packaged-macos'])assert.ok(verify.slice(verify.indexOf('  '+job+':')).split(/\n  [a-z][a-z-]+:/)[0].includes('node scripts/native-smoke.mjs'),'native custody missing from '+job);
+ const linux=verify.slice(verify.indexOf('  packaged-linux:')).split(/\n  [a-z][a-z-]+:/)[0];
+ assert.ok(linux.includes('libsecret-tools')&&linux.includes('gnome-keyring')&&linux.includes('node scripts/linux-native-session.mjs'),'packaged Linux must exercise a real isolated Secret Service');
 });

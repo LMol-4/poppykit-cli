@@ -13,9 +13,14 @@ CI first builds the universal macOS Keychain helper on a macOS runner using its
 installed Apple toolchain. `scripts/build-native.mjs` signs ad-hoc, verifies both
 architectures and the 11.0 deployment target, and records source/binary hashes.
 `scripts/check-native.mjs` binds those bytes to this checkout before Linux packs
-them. Users never compile at installation. Packaged Windows/macOS jobs exercise
+them. Users never compile at installation. Packaged Windows/macOS/Linux jobs exercise
 the exact tarball, synthetic credentials and a disposable Keychain. Actual human
 upgrade approval remains a separate check, never inferred from fixture tests.
+
+The Linux job installs distro `libsecret-tools`, GNOME Keyring and D-Bus test
+prerequisites, then runs `scripts/linux-native-session.mjs` against the installed
+tarball. It creates a disposable bus and keyring with a private piped test unlock;
+it does not use or modify the runner's desktop keyring. See [Linux](docs/linux.md).
 
 ```sh
 npm run typecheck
