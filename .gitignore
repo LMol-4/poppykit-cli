@@ -49,6 +49,9 @@ coverage/
 /scripts/install-candidate.mjs
 
 /tests/license.test.mjs
+/tests/linux.test.mjs
+/tests/linux.test.mjs.map
+/scripts/linux-native-session.mjs
 /scripts/native-smoke.mjs
 /test-support/native-worker.mjs
 /native/darwin-keychain

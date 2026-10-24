@@ -16,8 +16,11 @@ try{
       await backend.healthCheck();
       if(input.action==='read'){const value=await backend.secrets.read(input.ref);console.log(JSON.stringify({hash:value===null?null:createHash('sha256').update(value).digest('hex'),tty:!!process.stdin.isTTY}));}
       else{
-        const ref=await backend.secrets.stage(input.value),state=new State(join(input.home,'cli.sqlite'));
+        const ref=await backend.secrets.stage(input.value);
+        if(input.action!=='stage-native'){
+        const state=new State(join(input.home,'cli.sqlite'));
         try{const p=state.createProfile('native','https://provider.example/v1','company.example'),record={provider:p.provider,domain:p.domain,installationId:p.installationId,clientId:'https://provider.example/client.json',callbackUrl:'https://provider.example/callback',credentialRef:ref};state.update(p,{...record,enrollmentUrl:'https://provider.example/enrollment'});state.put('enrollment',p.id,record);}finally{state.close();}
+        }
         console.log(JSON.stringify({ref,tty:!!process.stdin.isTTY}));
       }
     }finally{await backend.close?.();}

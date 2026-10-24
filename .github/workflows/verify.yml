@@ -247,6 +247,8 @@ jobs:
         env:
           EXPECTED_MANIFEST_SHA: ${{ needs.candidate.outputs.manifest-sha }}
       - run: node scripts/install-candidate.mjs .candidate/artifacts
+      - run: sudo apt-get update && sudo apt-get install --yes libsecret-tools gnome-keyring dbus libglib2.0-bin
+      - run: node scripts/linux-native-session.mjs ".candidate/artifacts/clean install ü/node_modules/@poppykit/cli"
       - run: node scripts/packaged-check.mjs ".candidate/artifacts/clean install ü" 2>&1 | tee .candidate/packaged.log
         env:
           POPPYKIT_TEST_PROVIDER_ORIGIN: https://operator-secondary.example

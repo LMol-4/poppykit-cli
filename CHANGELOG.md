@@ -2,6 +2,13 @@
 
 ## 0.3.1 (unreleased candidate)
 
+- Browser enrollment and direct company consent wait for a committed decision,
+  return automatically to the calling agent and retain safe interrupted recovery.
+- Built-in Linux Secret Service wrapping-key custody using libsecret's `secret-tool`,
+  atomic references across processes, existing-vault migration and safe failures.
+- Isolated real Linux keyring/package CI alongside Windows/macOS native checks;
+  [desktop prerequisites and headless limits](docs/linux.md) are explicit.
+
 Add automatic macOS Keychain custody through a bundled universal native helper,
 and explicit single-unlock adoption of existing attended storage on Mac/Windows.
 Migration preserves ciphertext/references and recovers interrupted publication.
