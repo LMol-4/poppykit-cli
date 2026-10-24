@@ -29,6 +29,8 @@ of that name stays inside `result`. Human output includes the whole envelope
 when those CLI handles are present.
 Opaque protocol `outcome` extensions do not classify CLI authorization or process
 exit codes; those statuses come from the enrollment/authentication commands.
+Local `status HANDLE` exposes public destination/binding metadata and omits the
+vault enrollment reference, as other public profile/auth envelopes do.
 
 Typed failures can add `requiredScopes`, `retryAfterMs`, `retryAt`, `conversationId`
 and `extensions` to `error`. Only SDK-validated fields are projected; raw error

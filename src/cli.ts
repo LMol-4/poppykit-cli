@@ -128,7 +128,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       try{await store.advanceCheckpoint(delivery.key,{connectionId:delivery.key.connectionId,issuer:delivery.key.issuer,conversationId:delivery.conversationId,name:delivery.consumer,cursor:delivery.cursor},[delivery.previous]);}finally{store.close();}
       state.remove('delivery',pos[0]);return reply({acknowledged:true,cursor:delivery.cursor});
     }
-    if (command === 'status') { need(1); const row = state.get<any>('retry',pos[0]); if (!row || row.binding.profileId !== p.id) fail('unknown_retry'); return reply({ operation: pos[0], createdAt: row.createdAt, messageId: row.messageId, binding: row.binding }); }
+    if (command === 'status') { need(1); const row = state.get<any>('retry',pos[0]); if (!row || row.binding.profileId !== p.id) fail('unknown_retry'); const {profileId,provider,installationId,connectionId,issuer,endpoint,resource}=row.binding;return reply({ operation: pos[0], createdAt: row.createdAt, messageId: row.messageId, binding:{profileId,provider,installationId,connectionId,issuer,endpoint,resource} }); }
     sdk = deps.sdk ?? await import('@poppykit/client');
     transport = cancelable(deps.transport ?? sdk.createNodeTransport(),abort.signal);
     let metadata = sdk.createMetadataResolver(transport);

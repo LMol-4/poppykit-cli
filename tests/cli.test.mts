@@ -262,6 +262,7 @@ test('company 503 retains the generated send handle and exact retry without expo
     const failed=await f.run(['start','--text','generic message']),output=failed.out.toJSON();
     assert.equal(failed.code,1);assert.equal(failed.out.error.code,'company_unavailable');
     assert.equal(typeof output.sendOperation,'string');assert.ok(typeof output.sendOperation==='string');
+    const metadata=await f.ok(['status',output.sendOperation]),state=new State(join(f.home,'cli.sqlite'));const enrollmentRef=state.profile().credentialRef;state.close();assert.ok(enrollmentRef);assert.ok(!JSON.stringify(metadata).includes(enrollmentRef),'status omits the private vault reference from its known binding envelope');
     assert.ok(output.error&&typeof output.error==='object'&&'httpStatus' in output.error);assert.equal(output.error.httpStatus,503);
     assert.match(JSON.stringify(output),/Delivery is unconfirmed/);assert.match(JSON.stringify(output),/enrollment does not need to be repeated/);assert.ok(!JSON.stringify(output).includes('PRIVATE_'));
     f.setUnavailable(false);await f.ok(['retry',output.sendOperation]);
