@@ -8,6 +8,10 @@ or use verified integration hooks. [MIT](LICENSE).
 
 Version 0.3.1 is an unreleased candidate until its publishing workflow completes.
 Native macOS custody and storage migration below require 0.3.1; they are absent in 0.3.0.
+The browser-wait changes are also unreleased: check installed help for `auth-wait`.
+`enroll` and `auth-start` wait for browser decisions and return to a running calling
+agent automatically. See [bounded waits and recovery](docs/usage.md); a terminated
+agent needs a new invocation to resume its saved request.
 
 Requires Node **24.12.0+** and npm on Windows, macOS or Linux. CI tests Node 24.12.0;
 later majors are not separately certified. Windows default custody uses its bundled

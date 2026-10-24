@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { main, runtimeSupported } from '../dist/cli.js';
+import { waitForApproval } from '../dist/approval.js';
 import { encryptedBackend, openBackend } from '../dist/secrets.js';
 import { nativeBackend, migrateNativeStorage, publishNativeReference } from '../dist/native.js';
 import { State } from '../dist/state.js';
@@ -32,7 +33,7 @@ test('browser enrollment stages verifier before public start, resumes, binds onc
     const run=async(args:string[])=>{const result=await main([...args,'--json'],{POPPYKIT_HOME:home},{backend,transport});assert.ok(!JSON.stringify(result).includes('PRIVATE_'));return result;};
     try{
       assert.equal((await run(['setup','--provider','https://identity.example/v1','--enrollment','https://identity.example/enrollment','--company','company.example'])).code,0);
-      assert.equal((await run(['enroll'])).code,0);
+      assert.equal((await run(['enroll','--no-wait'])).code,0);
       const completed=await run(['enroll-status']);
       const state=new State(join(home,'cli.sqlite'));
       try{assert.equal(!!state.profile().credentialRef,mode==='ready');assert.equal(state.list('browser-enrollment').length,mode==='lost-cancel'?1:0);}finally{state.close();}
@@ -45,12 +46,32 @@ test('browser enrollment stages verifier before public start, resumes, binds onc
       }
       else if(mode==='lost-cancel'){
         assert.equal(completed.code,6);assert.equal(secrets.size,1);
-        assert.equal((await run(['enroll'])).code,5);
+        assert.equal((await run(['enroll','--no-wait'])).code,6);
         assert.equal((await run(['enroll-status'])).code,6);assert.equal(statusAttempts,1);
         assert.equal((await run(['enroll-cancel'])).code,0);assert.equal(cancelAttempts,2);assert.equal(secrets.size,0);
       }else{assert.equal(secrets.size,0);assert.equal(canceled,mode!=='denied');}
     }finally{await rm(home,{recursive:true,force:true});}
   }
+});
+
+test('initiating enrollment waits, tolerates rate limiting, preserves cancellation and resumes without another start',async()=>{
+  const home=await mkdtemp(join(tmpdir(),'enrollment wait ')),secrets=new Map<string,string>();let starts=0,polls=0,approved=false,cancels=0;
+  const backend:SecureBackend={async healthCheck(){},secrets:{async stage(value){const id=randomUUID();secrets.set(id,value);return id;},async read(id){return secrets.get(id)??null;},async remove(id){secrets.delete(id);}}};
+  const transport:HttpTransport={async fetch(request){
+    if(request.url.endsWith('/start')){starts++;return Response.json({requestId:'r'.repeat(43),browserUrl:'https://identity.example/approve',expiresAt:Date.now()+300000});}
+    if(request.url.endsWith('/cancel')){cancels++;return Response.json({canceled:true});}
+    polls++;if(polls===1)return Response.json({error:'rate_limited'},{status:429});
+    return Response.json(approved?{status:'ready',credential:'PRIVATE_CREDENTIAL',clientId,callbackUrl}:{status:'pending'});
+  }};
+  const env={POPPYKIT_HOME:home};
+  try {
+    await main(['setup','--provider','https://identity.example/v1','--enrollment','https://identity.example/enrollment','--company','company.example'],env);
+    const timeout=await main(['enroll','--no-open','--wait-timeout','1'],env,{backend,transport});assert.equal(reply(timeout.out).result.status,'pending');assert.equal(starts,1);assert.equal(cancels,0);
+    const interrupted=await main(['enroll'],env,{backend,transport,openBrowser:async()=>{process.emit('SIGINT');}});assert.equal(interrupted.code,130);assert.equal(cancels,0);assert.equal(secrets.size,1);
+    approved=true;
+    const result=await main(['enroll','--no-open'],env,{backend,transport});assert.equal(result.code,0);assert.equal(reply(result.out).result.toJSON().enrolled,true);assert.equal(starts,1);assert.ok(!JSON.stringify(result).includes('PRIVATE_'));
+    assert.equal((await main(['enroll','--no-open'],env,{backend,transport})).code,0);assert.equal(starts,1);
+  }finally{await rm(home,{recursive:true,force:true});}
 });
 async function fixture(){
   const home=await mkdtemp(join(tmpdir(),'poppy ü spaces ')),secrets=new Map<string,string>(),store=new SqliteProviderStore(join(home,'provider.sqlite'));
@@ -63,7 +84,7 @@ async function fixture(){
   const sent:unknown[]=[];let loseSend=false,unavailable=false,mediated=0;
   const token=(signedIn:boolean,session='session1')=>({access_token:signedIn?'PRIVATE_ACCESS':'PRIVATE_SESSION',token_type:'DPoP',expires_in:300,session_id:session,signed_in:signedIn,scope:signedIn?'poppy:read':'',...(signedIn?{refresh_token:'PRIVATE_ACCOUNT'}:{})});
   const transport:HttpTransport={async fetch(request){const u=new URL(request.url);if(u.hostname==='identity.example')return provider.handle(request);if(u.pathname==='/.well-known/poppy.json')return Response.json(doc);if(u.pathname==='/.well-known/oauth-authorization-server/issuer')return Response.json(authorization);if(u.pathname==='/token'){const form=new URLSearchParams(await request.text());return Response.json(token(form.get('grant_type')!=='urn:ietf:params:oauth:grant-type:jwt-bearer',form.get('session_id')??'session1'));}if(u.pathname==='/device')return Response.json({device_code:'PRIVATE_DEVICE',user_code:'USER-CODE',verification_uri:'https://company.example/verify',expires_in:600,interval:1});if(u.pathname.startsWith('/mediated')){mediated++;const body=await request.json();if(mediated===1){assert.equal(body.credentials.password,'PRIVATE_PASSWORD');return Response.json({status:'code_required',sign_in_id:'challenge1',code:{sent_to:'email'},expires_at:new Date(Date.now()+600000).toISOString()});}assert.equal(body.code,'PRIVATE_OTP');return Response.json({status:'complete',...token(true)});}if(u.pathname==='/revoke')return new Response(null,{status:200});if(u.pathname.startsWith('/conversations')){if(request.method==='POST'){sent.push(await request.json());if(unavailable)return Response.json({error:'PRIVATE_REMOTE_BODY'},{status:503});if(loseSend){loseSend=false;throw new Error('PRIVATE_FAILURE');}return Response.json({conversation_id:'conversation1',status:'idle',responder:'agent'});}return Response.json({conversation_id:'conversation1',status:'idle',responder:'agent',events:[],cursor:null,has_more:false});}throw new Error('unexpected fixture destination '+request.url);}};
-  const run=async (args:string[])=>{const r=await main([...args,'--json'],{POPPYKIT_HOME:home},{backend,transport});return {...r,out:reply(r.out)};};
+  const run=async (args:string[])=>{const r=await main([...args,'--no-wait','--json'],{POPPYKIT_HOME:home},{backend,transport});return {...r,out:reply(r.out)};};
   const ok=async (args:string[])=>{const result=await run(args);assert.equal(result.code,0,JSON.stringify(result.out));assert.equal(typeof result.out,'object');return result.out.result;};
   await ok(['setup','--provider','https://identity.example/v1','--company','company.example']);await ok(['enroll']);
   return {home,backend,provider,transport,run,ok,sent,secrets,setLoseSend:()=>loseSend=true,setUnavailable:(value:boolean)=>unavailable=value,close:async()=>{store.close();await rm(home,{recursive:true,force:true});}};
@@ -136,6 +157,82 @@ test('Direct enrollment, callback, restart completion and sign-out redact all cr
     const scopes=await f.ok(['scopes','--scope','poppy:read']);assert.equal(scopes.sufficient,true);
     const signedOut=await f.ok(['sign-out']);assert.equal(signedOut.connection.status,'disconnected');
   }finally{await f.close();}
+});
+
+test('initiating direct command returns approval or denial automatically and reuses only sufficient grants',async()=>{
+  for(const decision of ['approve','deny']) {
+    const f=await fixture();try {
+      await f.ok(['connect']);let links=0;
+      const run=()=>main(['auth-start','--scope','poppy:read','--json'],{POPPYKIT_HOME:f.home},{backend:f.backend,transport:f.transport,progress:value=>assert.ok(!JSON.stringify(value).includes('PRIVATE_')),openBrowser:async link=>{
+        links++;const callback=new URL(callbackUrl);callback.searchParams.set('state',new URL(link).searchParams.get('state')!);callback.searchParams.set('iss',issuer);callback.searchParams.set(decision==='approve'?'code':'error',decision==='approve'?'PRIVATE_CODE':'access_denied');await f.provider.callback(callback.href);
+      }});
+      const result=await run();assert.equal(result.code,decision==='approve'?0:3);
+      assert.equal(reply(result.out).result.status,decision==='approve'?'completed':'denied');
+      assert.ok(!JSON.stringify(result).includes('PRIVATE_'));assert.equal(links,1);
+      if(decision==='approve') { const again=await run();assert.equal(reply(again.out).result.toJSON().reused,true);assert.equal(links,1); }
+    }finally{await f.close();}
+  }
+});
+
+test('bounded direct wait resumes the same operation after timeout and rejects concurrent consumers',async()=>{
+  const f=await fixture();try {
+    await f.ok(['connect']);let link='',operationId='';
+    const args=['auth-start','--scope','poppy:read','--wait-timeout','1','--json'];
+    const first=await main(args,{POPPYKIT_HOME:f.home},{backend:f.backend,transport:f.transport,openBrowser:async value=>{link=value;},progress:value=>{operationId=(value as {operationId:string}).operationId;}});
+    assert.equal(first.code,0);assert.equal(reply(first.out).result.status,'pending');assert.ok(operationId);
+    const callback=new URL(callbackUrl);callback.searchParams.set('state',new URL(link).searchParams.get('state')!);callback.searchParams.set('iss',issuer);callback.searchParams.set('code','PRIVATE_CODE');await f.provider.callback(callback.href);
+    const completed=await main(['auth-wait',operationId,'--no-open','--json'],{POPPYKIT_HOME:f.home},{backend:f.backend,transport:f.transport});
+    assert.equal(completed.code,0);assert.equal(reply(completed.out).result.status,'completed');
+    const again=await f.ok(['auth-continue',operationId]);assert.equal(again.status,'completed');
+    const state=new State(join(f.home,'cli.sqlite'));const release=state.claimApproval('test');assert.throws(()=>state.claimApproval('test'),{code:'approval_in_use'});release();state.put('approval-owner','test',{pid:2147483647,token:'dead'});state.claimApproval('test')();state.close();
+  }finally{await f.close();}
+});
+
+test('approval polling honors retry guidance and aborts during backoff',async()=>{
+  const controller=new AbortController();let attempts=0;
+  const task=waitForApproval(async()=>{attempts++;throw {code:'rate_limited',retryAt:Date.now()+60_000};},{signal:controller.signal,pending:()=>true,timeoutMs:20});
+  assert.equal(await task,undefined);assert.equal(attempts,1);
+  const cancelled=waitForApproval(async()=>({status:'pending'}),{signal:controller.signal,pending:()=>true,timeoutMs:300_000});controller.abort();await assert.rejects(cancelled,{name:'AbortError'});
+});
+
+test('lost one-time direct retrieval reports uncertainty and never consumes again after restart',async()=>{
+  const f=await fixture();let release:(()=>void)|undefined;
+  try {
+    await f.ok(['connect']);let takes=0,operationId='';
+    const transport:HttpTransport={async fetch(request,options){const response=await f.transport.fetch(request,options);if(request.url.endsWith('/takeResult')){takes++;await new Promise<void>(resolve=>release=resolve);}return response;}};
+    const result=await main(['auth-start','--scope','poppy:read','--wait-timeout','1'],{POPPYKIT_HOME:f.home},{backend:f.backend,transport,progress:value=>operationId=(value as {operationId:string}).operationId,openBrowser:async link=>{
+      const callback=new URL(callbackUrl);callback.searchParams.set('state',new URL(link).searchParams.get('state')!);callback.searchParams.set('iss',issuer);callback.searchParams.set('code','PRIVATE_CODE');await f.provider.callback(callback.href);
+    }});
+    assert.equal(result.code,6);assert.equal(reply(result.out).result.status,'uncertain');release?.();
+    const resumed=await main(['auth-wait',operationId,'--no-open'],{POPPYKIT_HOME:f.home},{backend:f.backend,transport});
+    assert.equal(resumed.code,6);assert.equal(takes,1);assert.equal(reply(resumed.out).error.code,'approval_result_uncertain');
+    assert.equal((await f.run(['auth-cancel',operationId])).code,130);
+  }finally{release?.();await f.close();}
+});
+
+test('received callback stays encrypted and resumes locally without another provider redemption',async()=>{
+  const f=await fixture();try {
+    await f.ok(['connect']);let operationId='',takes=0,failRead=true;
+    const backend:SecureBackend={...f.backend,secrets:{...f.backend.secrets,async read(ref){const value=await f.backend.secrets.read(ref);if(failRead&&value?.startsWith(callbackUrl+'?')){failRead=false;throw new Error('PRIVATE_INTERRUPTION');}return value;}}};
+    const transport:HttpTransport={async fetch(request,options){if(request.url.endsWith('/takeResult'))takes++;return f.transport.fetch(request,options);}};
+    const first=await main(['auth-start','--scope','poppy:read'],{POPPYKIT_HOME:f.home},{backend,transport,progress:value=>operationId=(value as {operationId:string}).operationId,openBrowser:async link=>{
+      const callback=new URL(callbackUrl);callback.searchParams.set('state',new URL(link).searchParams.get('state')!);callback.searchParams.set('iss',issuer);callback.searchParams.set('code','PRIVATE_CODE');await f.provider.callback(callback.href);
+    }});
+    assert.equal(first.code,1);assert.ok(!JSON.stringify(first).includes('PRIVATE_'));
+    const next=await main(['auth-wait',operationId,'--no-open'],{POPPYKIT_HOME:f.home},{backend,transport});assert.equal(next.code,0);assert.equal(reply(next.out).result.status,'completed');assert.equal(takes,1);
+  }finally{await f.close();}
+});
+
+test('lost enrollment redemption reports uncertainty and requires explicit cleanup rather than polling again',async()=>{
+  const home=await mkdtemp(join(tmpdir(),'lost enrollment wait ')),secrets=new Map<string,string>();let polls=0,release:(()=>void)|undefined;
+  const backend:SecureBackend={async healthCheck(){},secrets:{async stage(value){const id=randomUUID();secrets.set(id,value);return id;},async read(id){return secrets.get(id)??null;},async remove(id){secrets.delete(id);}}};
+  const transport:HttpTransport={async fetch(request){if(request.url.endsWith('/start'))return Response.json({requestId:'r'.repeat(43),browserUrl:'https://identity.example/approve',expiresAt:Date.now()+300000});if(request.url.endsWith('/cancel'))return Response.json({canceled:true});polls++;await new Promise<void>(resolve=>release=resolve);return Response.json({status:'ready',credential:'PRIVATE_CREDENTIAL',clientId,callbackUrl});}};
+  const env={POPPYKIT_HOME:home};try {
+    await main(['setup','--provider','https://identity.example/v1','--enrollment','https://identity.example/enrollment','--company','company.example'],env);
+    const first=await main(['enroll','--no-open','--wait-timeout','1'],env,{backend,transport});assert.equal(first.code,6);assert.equal(reply(first.out).result.status,'uncertain');release?.();
+    const resumed=await main(['enroll','--no-open'],env,{backend,transport});assert.equal(resumed.code,6);assert.equal(polls,1);
+    assert.equal((await main(['enroll-cancel'],env,{backend,transport})).code,0);assert.equal(secrets.size,0);
+  }finally{release?.();await rm(home,{recursive:true,force:true});}
 });
 test('Device and Mediated sign-in restart through SDK lifecycle and trusted input',async()=>{
   for(const method of ['device','mediated']){const f=await fixture();try{

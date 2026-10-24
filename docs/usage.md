@@ -80,6 +80,36 @@ poppykit connect --json
 poppykit discovery --json
 ```
 
+`enroll` and `auth-start` now wait for a browser decision by default. This is an
+unreleased candidate feature; check installed help for `auth-wait` before using it.
+The CLI opens the public HTTPS approval link when practical and writes progress,
+the link and a safe resume handle to stderr. `--json` still emits one final JSON
+object on stdout. Agents must keep their tool process/session running and consume
+that result; no human “approved” message or second command is needed.
+
+Waits last at most 300 seconds; `--wait-timeout SECONDS` accepts 1–300.
+`--no-open` only displays the link. `--no-wait` preserves the low-level start
+result for existing integrations. `auth-status`, `auth-continue`, `enroll-status`
+and explicit cancellation commands remain available with their existing roles.
+Each poll is a short request; the server never holds a human-length request open.
+Rate-limit/device retry guidance is honored. SIGINT/SIGTERM stops the local wait
+with exit 130 and retains the bound request. A timeout while waiting returns
+pending plus resume metadata; lost one-time retrieval returns uncertain instead.
+Received enrollment/callback material is saved encrypted before local completion.
+Uncertain retrieval is never dispatched again: inspect and explicitly cancel the
+saved request before starting a fresh authorization. Run `enroll` again for safely
+saved enrollment or `auth-wait OP` for company
+consent after interruption. `enroll-cancel`/`auth-cancel OP` explicitly cancel.
+One local process at a time may consume each profile/connection approval; dead
+owners can be recovered. Never delete state to bypass a live owner.
+
+Enrollment and sufficient company grants are reused only under their saved
+profile/installation/issuer/connection bindings. A scope upgrade still needs
+consent; denial preserves earlier access. Browser completion means the server
+saved a decision, and the waiting CLI still verifies and commits its result.
+A closed agent or terminated process cannot be woken by this page: resume from
+a new invocation. Lost one-time retrieval remains uncertain, never blindly replayed.
+
 The CLI stages a private verifier before starting enrollment. Public browser links
 and request IDs grant no authority. `enroll-status` redeems once and stages the
 credential before binding the local profile. Repeating a successful retrieval
