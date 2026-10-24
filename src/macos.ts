@@ -19,41 +19,33 @@ function main() {
     var status = input.keychain ? $.SecKeychainOpen(input.keychain, keychain) : $.SecKeychainCopyDefault(keychain);
     function check(code) { if (code !== 0) throw code; }
     check(status);
-    function query() {
-      phase = 'query';
-      var q = $.NSMutableDictionary.alloc.init;
-      q.setObjectForKey($.kSecClassGenericPassword, $.kSecClass);
-      q.setObjectForKey($(input.service), $.kSecAttrService);
-      q.setObjectForKey($('vault-key-v1'), $.kSecAttrAccount);
-      return q;
-    }
+    var service = input.service, account = 'vault-key-v1';
     if (input.action === 'adopt') {
-      var add = query();
-      add.setObjectForKey(keychain[0], $.kSecUseKeychain);
-      add.setObjectForKey($('PoppyKit CLI local vault'), $.kSecAttrLabel);
-      add.setObjectForKey($(input.value).dataUsingEncoding($.NSUTF8StringEncoding), $.kSecValueData);
+      var valueData = $(input.value).dataUsingEncoding($.NSUTF8StringEncoding);
       phase = 'add';
-      status = $.SecItemAdd(add, null);
+      status = $.SecKeychainAddGenericPassword(keychain[0], service.length, service, account.length, account, valueData.length, valueData.bytes, null);
       if (status !== -25299) check(status);
     } else if (input.action !== 'load') throw -50;
-    var read = query(), result = Ref();
-    read.setObjectForKey($.NSArray.arrayWithObject(keychain[0]), $.kSecMatchSearchList);
-    read.setObjectForKey($.kCFBooleanTrue, $.kSecReturnData);
-    read.setObjectForKey($.kSecMatchLimitOne, $.kSecMatchLimit);
+    var length = Ref(), result = Ref();
     phase = 'read';
-    status = $.SecItemCopyMatching(read, result);
+    status = $.SecKeychainFindGenericPassword(keychain[0], service.length, service, account.length, account, length, result, null);
     if (status === -25300) return output({ ok: true, value: null });
     check(status);
     phase = 'decode';
-    var value = ObjC.unwrap($.NSString.alloc.initWithDataEncoding(result[0], $.NSUTF8StringEncoding));
-    if (typeof value !== 'string') throw -50;
-    output({ ok: true, value: value });
+    try {
+      if (length[0] > 16384) throw -50;
+      var data = $.NSData.dataWithBytesLength(result[0], length[0]);
+      var value = ObjC.unwrap($.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding));
+      if (typeof value !== 'string') throw -50;
+      output({ ok: true, value: value });
+    } finally { $.SecKeychainItemFreeContent(null, result[0]); }
   } catch (error) { output({ ok: false, code: error === -25308 || error === -25293 ? 'secure_store_locked' : 'secure_store_unavailable', phase: phase, status: typeof error === 'number' ? error : null }); }
 }
 main();
 `;
 
 /** Login Keychain custody; other processes running as this macOS user are not isolated. */
+// shortcut: deprecated generic-password APIs avoid JXA's CF query incompatibility; replace when a tested modern bridge or native helper is available.
 export function macosKeyStore(directory: string, keychain?: string): NativeKeyStore {
   if (process.platform !== 'darwin') throw new CliFailure('secure_backend_unavailable', 4);
   const service = 'org.poppykit.cli.vault.' + createHash('sha256').update(directory).digest('hex');
