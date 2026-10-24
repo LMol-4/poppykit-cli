@@ -21,6 +21,14 @@ cannot select a module to execute.
 neither stream contains stored credentials or raw provider/OS diagnostics.
 Protocol `read`/`watch` data and extension fields retain their original JSON values,
 including business fields named `secret`, `authorization` or `credential`.
+Named consumers return the CLI acknowledgment token as top-level `delivery`,
+outside `result`, so a protocol extension of that name is preserved. Pass that
+token to `ack`; `result.delivery` belongs to the protocol page if present.
+Likewise CLI send/retry handles are top-level `sendOperation`; a company extension
+of that name stays inside `result`. Human output includes the whole envelope
+when those CLI handles are present.
+Opaque protocol `outcome` extensions do not classify CLI authorization or process
+exit codes; those statuses come from the enrollment/authentication commands.
 
 Typed failures can add `requiredScopes`, `retryAfterMs`, `retryAt`, `conversationId`
 and `extensions` to `error`. Only SDK-validated fields are projected; raw error

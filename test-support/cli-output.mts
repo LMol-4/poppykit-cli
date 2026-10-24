@@ -14,8 +14,8 @@ export function result(value:unknown){const row=object(value);return {toJSON(){r
  get device(){return {userCode:text(object(row.device).userCode)};},
  get sufficient(){assert.equal(typeof row.sufficient,'boolean');return row.sufficient;},
  get grantedScopes(){return strings(row.grantedScopes);},get missingScopes(){return strings(row.missingScopes);},
- get delivery(){return text(row.delivery);},get cursor(){assert.ok(row.cursor===null||typeof row.cursor==='string');return row.cursor;},
+ get cursor(){assert.ok(row.cursor===null||typeof row.cursor==='string');return row.cursor;},
  get events(){assert.ok(Array.isArray(row.events));return row.events;},
  get methods(){assert.ok(Array.isArray(row.methods));return row.methods.map(m=>({method:text(object(m).method)}));},
  };}
-export function reply(value:unknown){const row=object(value);return {toJSON(){return row;},get status(){return text(row.status);},get result(){return result(row.result);},get error(){return {code:text(object(row.error).code),get requiredScopes(){return strings(object(row.error).requiredScopes);}};}};}
+export function reply(value:unknown){const row=object(value);return {toJSON(){return row;},get status(){return text(row.status);},get delivery(){return text(row.delivery);},get result(){return result(row.result);},get error(){return {code:text(object(row.error).code),get requiredScopes(){return strings(object(row.error).requiredScopes);}};}};}

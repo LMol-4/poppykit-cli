@@ -42,7 +42,7 @@ attended encrypted storage with a hidden terminal passphrase each invocation.
 Exit: 0 complete/pending, 1 runtime/remote, 2 usage, 3 authorization, 4 secure
 backend/trusted input unavailable, 5 binding conflict, 6 uncertain, 130 canceled.
 `;
-type Reply = { version: 1; command: string; status: 'ok' | 'error'; result?: unknown; sendOperation?: string; error?: { code: string; nextAction?: string; httpStatus?: number; requiredScopes?: string[]; retryAfterMs?: number; retryAt?: string; conversationId?: string; extensions?: string[] }; requestId: string };
+type Reply = { version: 1; command: string; status: 'ok' | 'error'; result?: unknown; sendOperation?: string; delivery?: string; error?: { code: string; nextAction?: string; httpStatus?: number; requiredScopes?: string[]; retryAfterMs?: number; retryAt?: string; conversationId?: string; extensions?: string[] }; requestId: string };
 interface Dependencies { sdk?: typeof import('@poppykit/client'); transport?: HttpTransport; backend?: SecureBackend; openBrowser?:(url:string)=>Promise<void>; progress?:(value:unknown)=>void }
 function fail(code: string, exitCode = 2): never { throw new CliFailure(code, exitCode); }
 const publicConnection = ({id,domain,issuer,organization,sessionId,generation,status,scopes}:Connection):Connection => ({id,domain,issuer,organization:{name:organization.name,domain:organization.domain},sessionId,generation,status,scopes});
@@ -63,7 +63,7 @@ function cancelable(transport:HttpTransport,signal:AbortSignal):HttpTransport {
 }
 export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env, deps: Dependencies = {}): Promise<{ out: Reply | string; code: number }> {
   const command = argv[0] ?? 'help', requestId = randomUUID();
-  const reply = (result: any) => {if(abort.signal.aborted&&!boundedWatchComplete)throw new CliFailure('canceled',130); const status = result?.outcome?.status ?? result?.status; return { out: { version: 1 as const, command, status: 'ok' as const, result, requestId }, code: status === 'uncertain' ? 6 : ['denied','expired','failed'].includes(status) ? 3 : status === 'cancelled' ? 130 : 0 }; };
+  const reply = (result: any, metadata:Pick<Reply,'delivery'|'sendOperation'>={}) => {if(abort.signal.aborted&&!boundedWatchComplete)throw new CliFailure('canceled',130); const status = ['connect','enroll','enroll-status','auth-start','auth-status','auth-continue','auth-wait','auth-cancel'].includes(command) ? result?.outcome?.status ?? result?.status : undefined; return { out: { version: 1 as const, command, status: 'ok' as const, result, ...metadata, requestId }, code: status === 'uncertain' ? 6 : ['denied','expired','failed'].includes(status) ? 3 : status === 'cancelled' ? 130 : 0 }; };
   let state: State | undefined, backend: SecureBackend | undefined, transport: HttpTransport | undefined, authStore: any, conversationStore: any;
   let retryHandle:string|undefined;
   let sdk:typeof import('@poppykit/client')|undefined;
@@ -355,15 +355,15 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       const message = {id:row.messageId,sender:'agent' as const,text:row.payload.text};
       const result = row.payload.command==='start'?await conversation.start(message,{signal:abort.signal}):await conversation.send(row.payload.conversationId,message,{signal:abort.signal});
       bindConversation(result.conversation_id);
-      return reply({sendOperation:handle,...result});
+      return reply(result,{sendOperation:handle});
     }
-    if (command === 'read') { need(1);const page=await conversation.read(pos[0],{cursor:previous,signal:abort.signal});return reply({...page,delivery:delivery(page.cursor)}); }
+    if (command === 'read') { need(1);const page=await conversation.read(pos[0],{cursor:previous,signal:abort.signal});return reply(page,{delivery:delivery(page.cursor)}); }
     if (command === 'watch') {
       need(1); const events:unknown[]=[];let cursor=previous,timedOut=false;const timer=setTimeout(()=>{timedOut=true;boundedWatchComplete=true;abort.abort();},30000);
       try { for await(const item of conversation.watch(pos[0],{cursor,signal:abort.signal,maxReconnects:0})) { events.push(item.event);cursor=item.event.id;if(events.length>=100)break; } }
       catch(error){if(!timedOut)throw error;}finally{clearTimeout(timer);}
       if(abort.signal.aborted&&!timedOut)fail('canceled',130);
-      return reply({events,cursor,delivery:delivery(cursor),notice:'Bounded watch; resume with cursor or acknowledge the delivery for a named consumer.'});
+      return reply({events,cursor,notice:'Bounded watch; resume with cursor or acknowledge the delivery for a named consumer.'},{delivery:delivery(cursor)});
     }
     if (command === 'handoff' || command === 'close') { need(1); return reply(await conversation[command](pos[0],{signal:abort.signal})); }
     return fail('unknown_command');
@@ -377,7 +377,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       return {out:{version:1,command,status:'ok',requestId,result:{status:'pending',resume,nextAction:'Wait ended. Resume the saved request; no agent is woken after its process exits.'}},code:0};
     }
     const known = error instanceof CliFailure, safe = error as { code?: string; retryAfterMs?: number; status?: number };
-    if(!abort.signal.aborted&&safe.code==='renewal_pending'&&retryHandle)return reply({status:'pending',sendOperation:retryHandle,nextAction:'retry_after_live_auth_finishes'});
+    if(!abort.signal.aborted&&safe.code==='renewal_pending'&&retryHandle)return reply({status:'pending',nextAction:'retry_after_live_auth_finishes'},{sendOperation:retryHandle});
     const authCodes = ['anonymous_unavailable','sign_in_required','insufficient_scope','invalid_scope','unsupported_method','direct_unavailable','device_unavailable','mediated_unavailable','trusted_input_required','provider_unavailable','provider_unauthorized','provider_rate_limited','provider_network_error','provider_invalid_response','provider_assertion_expired','provider_clock_skew','disconnected','invalid_grant','rate_limited','secure_store_locked','secure_store_unavailable','unauthorized','expired','canceled','consumed','binding_conflict'];
     const sdkCode = sdk && error instanceof sdk.ConversationError ? error.code : safe.code && authCodes.includes(safe.code) ? safe.code : undefined;
     const httpStatus = safe.code==='http_error' && typeof safe.status==='number' && Number.isInteger(safe.status) && safe.status>=500 && safe.status<=599 ? safe.status : undefined;
@@ -413,7 +413,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   const {out,code}=await main(process.argv.slice(2),process.env,{progress:value=>process.stderr.write(JSON.stringify(value)+'\n')});
   const structured=process.argv.includes('--json');
-  process.stdout.write(typeof out==='string'?out:structured?JSON.stringify(out)+'\n':out.status==='error'?`poppykit: ${out.error?.code}\n${out.sendOperation?`sendOperation: ${out.sendOperation}\n`:''}${out.error?.nextAction?`${out.error.nextAction}\n`:''}`:JSON.stringify(out.result,null,2)+'\n');
+  process.stdout.write(typeof out==='string'?out:structured?JSON.stringify(out)+'\n':out.status==='error'?`poppykit: ${out.error?.code}\n${out.sendOperation?`sendOperation: ${out.sendOperation}\n`:''}${out.error?.nextAction?`${out.error.nextAction}\n`:''}`:JSON.stringify(out.delivery||out.sendOperation?out:out.result,null,2)+'\n');
   process.exitCode=code;
 }
 

@@ -271,7 +271,8 @@ preparing a new versioned update; a failed send does not prove that no brief exi
 
 `read CONVERSATION` reads one page. `watch CONVERSATION` returns at most 100
 events or 30 seconds and returns a cursor; pass `--cursor` to resume. For durable
-consumption use `--consumer NAME`, process the returned batch, then `ack DELIVERY`.
+consumption use `--consumer NAME`, process the returned batch, then `ack DELIVERY`
+with the top-level JSON `delivery` token (outside `result`).
 Acknowledgement uses the SDK's compare-and-set checkpoint and stale acknowledgements
 cannot rewind it. Read/watch never implicitly acknowledge a batch. SIGINT/SIGTERM
 cancel the invocation; another invocation's live auth exchange remains intact.
