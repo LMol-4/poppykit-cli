@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtemp, rm, readFile, readdir, cp, writeFile, chmod } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { tmpdir, release } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -69,7 +69,7 @@ try{
     const unattended=cli(home,upgradeProject,['storage','migrate']);assert.equal(unattended.status,4);assert.equal(unattended.json.error.code,'secure_store_locked','unattended migration must not silently reauthorize a changed helper');
     assert.equal(cli(home).status,0,'original approved helper still opens unchanged vault');
   }
-  console.log(JSON.stringify({status:'PASS',platform:process.platform,architecture:process.arch,checks:['native-custody','process-restart','non-TTY','repeated-enrollment-status','Unicode-secret-and-path','wrong-migration-passphrase','migration-preserves-ciphertext','migration-retry','no-secret-output',...(process.platform==='darwin'?['disposable-keychain-locked-negative','changed-helper-refused','upgrade-recovery-hint','no-unattended-reauthorization']:[]),...(process.platform==='linux'?['concurrent-native-processes','missing-session-bus','unsafe-directory-refused','locked-keyring-refused']:[])],humanKeychainApproval:'NOT_RUN'}));
+  console.log(JSON.stringify({status:'PASS',platform:process.platform,architecture:process.arch,osRelease:release(),node:process.version,runtimeSha256:createHash('sha256').update(await readFile(process.execPath)).digest('hex'),checks:['native-custody','process-restart','non-TTY','repeated-enrollment-status','Unicode-secret-and-path','wrong-migration-passphrase','migration-preserves-ciphertext','migration-retry','no-secret-output',...(process.platform==='darwin'?['disposable-keychain-locked-negative','changed-helper-refused','upgrade-recovery-hint','no-unattended-reauthorization']:[]),...(process.platform==='linux'?['concurrent-native-processes','missing-session-bus','unsafe-directory-refused','locked-keyring-refused']:[])],humanKeychainApproval:'NOT_RUN'}));
 }finally{
   if(process.platform==='darwin'){
     if(previousKeychain)security(['default-keychain','-d','user','-s',previousKeychain]);
