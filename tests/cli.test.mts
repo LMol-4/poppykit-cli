@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { main, runtimeSupported } from '../dist/cli.js';
 import { encryptedBackend, openBackend } from '../dist/secrets.js';
+import { nativeBackend, migrateNativeStorage } from '../dist/native.js';
 import { State } from '../dist/state.js';
 import { createProvider, createResultCipher } from '@poppykit/client/provider';
 import { SqliteProviderStore } from '@poppykit/client/provider/sqlite';
@@ -35,7 +36,13 @@ test('browser enrollment stages verifier before public start, resumes, binds onc
       const completed=await run(['enroll-status']);
       const state=new State(join(home,'cli.sqlite'));
       try{assert.equal(!!state.profile().credentialRef,mode==='ready');assert.equal(state.list('browser-enrollment').length,mode==='lost-cancel'?1:0);}finally{state.close();}
-      if(mode==='ready'){assert.equal(completed.code,0);assert.deepEqual([...secrets.values()],['PRIVATE_CREDENTIAL']);}
+      if(mode==='ready'){
+        assert.equal(completed.code,0);assert.deepEqual([...secrets.values()],['PRIVATE_CREDENTIAL']);
+        const attempts=statusAttempts;
+        assert.equal((await run(['enroll-status'])).code,0);
+        assert.equal(statusAttempts,attempts,'saved enrollment retry does not redeem again');
+        secrets.clear();assert.equal((await run(['enroll-status'])).code,4,'missing saved credential fails closed');
+      }
       else if(mode==='lost-cancel'){
         assert.equal(completed.code,6);assert.equal(secrets.size,1);
         assert.equal((await run(['enroll'])).code,5);
@@ -80,6 +87,31 @@ test('encrypted attended backend persists only ciphertext, rejects wrong unlock 
     await assert.rejects(openBackend({module:join(home,'missing.mjs'),directory:home}),{code:'secure_store_unavailable'});
     const module=join(home,'locked.mjs');await writeFile(module,await readFile(new URL('../test-support/locked-backend.mjs',import.meta.url)));await assert.rejects(openBackend({module,directory:home}),{code:'secure_store_unavailable'});
   }finally{await rm(home,{recursive:true,force:true});}
+});
+
+test('native adoption preserves ciphertext through wrong unlock, interrupted custody and retry',async()=>{
+  for(const crash of ['none','before','after']){
+    const home=await mkdtemp(join(tmpdir(),'native adoption ü ')),directory=join(home,'vault');
+    let saved:string|null=null,attempts=0;
+    const keys={async load(){return saved;},async adopt(value:string){attempts++;if(crash==='before'&&attempts===1)throw new Error('simulated interruption');saved??=value;if(crash==='after'&&attempts===1)throw new Error('simulated interruption');return saved;}};
+    try{
+      const legacy=await encryptedBackend(directory,'a private test passphrase ü');await legacy.healthCheck();const ref=await legacy.secrets.stage('PRIVATE_MIGRATION_SENTINEL');legacy.close?.();
+      const files=await readdir(directory),before=await Promise.all(files.map(file=>readFile(join(directory,file))));
+      await assert.rejects(nativeBackend(directory,keys),{code:'storage_migration_required'});
+      await assert.rejects(migrateNativeStorage(directory,async()=> 'the wrong passphrase',keys),{code:'secure_store_locked'});assert.equal(saved,null);assert.equal(attempts,0);
+      if(crash!=='none')await assert.rejects(migrateNativeStorage(directory,async()=> 'a private test passphrase ü',keys));
+      await migrateNativeStorage(directory,async()=> 'a private test passphrase ü',keys);
+      await migrateNativeStorage(directory,async()=>{throw new Error('must not prompt after migration');},keys);
+      const current=await nativeBackend(directory,keys);assert.equal(await current.secrets.read(ref),'PRIVATE_MIGRATION_SENTINEL');assert.equal(await current.secrets.read('mem:foreign'),null);await current.close?.();
+      assert.deepEqual(await readdir(directory),files);assert.deepEqual(await Promise.all(files.map(file=>readFile(join(directory,file)))),before,'migration never rewrites original data');
+    }finally{await rm(home,{recursive:true,force:true});}
+  }
+});
+
+test('native fresh vault uses a single custody key across concurrent opens',async()=>{
+  const home=await mkdtemp(join(tmpdir(),'native concurrent ü ')),directory=join(home,'vault');let saved:string|null=null;
+  const keys={async load(){return saved;},async adopt(value:string){return saved??=value;}};
+  try{const [a,b]=await Promise.all([nativeBackend(directory,keys),nativeBackend(directory,keys)]);const ref=await a.secrets.stage('PRIVATE_NATIVE_SECRET');assert.equal(await b.secrets.read(ref),'PRIVATE_NATIVE_SECRET');await a.close?.();await b.close?.();}finally{await rm(home,{recursive:true,force:true});}
 });
 test('Direct enrollment, callback, restart completion and sign-out redact all credentials',async()=>{
   const f=await fixture();try{

@@ -12,9 +12,10 @@ import type { SecureBackend } from './secrets.js';
 import type { ClientAuth, HttpTransport } from '@poppykit/client';
 
 export const HELP = `Usage: poppykit <command> [--json] [--profile NAME] [--unlock]
-Node >=24.12.0. Direct SDK execution; no daemon. Windows custody uses built-in DPAPI.
+Node >=24.12.0. Direct SDK execution; no daemon. Native Windows DPAPI/macOS Keychain custody.
   setup --provider HTTPS_URL --company DOMAIN [--enrollment HTTPS_URL] [--profile NAME]
   backend --module ABSOLUTE_TRUSTED_MODULE
+  storage migrate                 adopt attended storage into the native vault
   profile list | profile remove NAME
   enroll | enroll-status | enroll-cancel  browser enrollment when configured
   discovery | connect [--anonymous] | connections | scopes [--scope S]
@@ -30,12 +31,12 @@ Node >=24.12.0. Direct SDK execution; no daemon. Windows custody uses built-in D
   api-request --api DISCOVERED_URL --destination VERIFIED_URL [--method GET]
   browser-join --return-to HTTPS_URL | feedback --task TASK --description TEXT
   diagnostics | enrollment-revoke
-Windows uses current-user DPAPI by default. Other unattended use requires a configured secure backend. --unlock explicitly uses
+Windows uses current-user DPAPI and macOS uses Keychain by default. Other unattended use requires a configured secure backend. --unlock explicitly uses
 attended encrypted storage with a hidden terminal passphrase each invocation.
 Exit: 0 complete/pending, 1 runtime/remote, 2 usage, 3 authorization, 4 secure
 backend/trusted input unavailable, 5 binding conflict, 6 uncertain, 130 canceled.
 `;
-type Reply = { version: 1; command: string; status: 'ok' | 'error'; result?: unknown; error?: { code: string }; requestId: string };
+type Reply = { version: 1; command: string; status: 'ok' | 'error'; result?: unknown; error?: { code: string; nextAction?: string }; requestId: string };
 interface Dependencies { sdk?: typeof import('@poppykit/client'); transport?: HttpTransport; backend?: SecureBackend }
 function fail(code: string, exitCode = 2): never { throw new CliFailure(code, exitCode); }
 const clean = (value: any): any => {
@@ -72,7 +73,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
     const v = parsed.values, pos = parsed.positionals, str = (key: keyof typeof options) => v[key] as string | undefined;
     const need = (count: number) => { if (pos.length !== count || pos.some(x => !x || x.includes('\0'))) fail('invalid_arguments'); };
     const required = (key: keyof typeof options) => str(key) ?? fail(`required_--${key}`);
-    const commands = ['setup','backend','profile','enroll','enroll-status','enroll-cancel','discovery','connect','connections','scopes','auth-start','auth-status','auth-continue','auth-cancel','sign-out','start','send','retry','status','retry-remove','read','watch','ack','handoff','close','api-target','api-request','browser-join','feedback','diagnostics','enrollment-revoke'];
+    const commands = ['setup','backend','storage','profile','enroll','enroll-status','enroll-cancel','discovery','connect','connections','scopes','auth-start','auth-status','auth-continue','auth-cancel','sign-out','start','send','retry','status','retry-remove','read','watch','ack','handoff','close','api-target','api-request','browser-join','feedback','diagnostics','enrollment-revoke'];
     if (!commands.includes(command)) fail('unknown_command');
     const home = resolve(env.POPPYKIT_HOME ?? join(homedir(), '.poppykit'));
     const {State: StateStore}=await import('./state.js');
@@ -87,12 +88,19 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       return reply({ profile: publicProfile(profile), nextAction: enrollmentUrl ? 'Run enroll, approve in your browser, then enroll-status. Company access requires separate consent.' : 'Configure backend, then enroll through a trusted user route' });
     }
     if (command === 'backend') { need(0); state.put('config','backend',{ module: resolve(required('module')) }); return reply({ configured: true }); }
+    if (command === 'storage') {
+      need(1); if (pos[0] !== 'migrate' || v.unlock) fail('usage_storage_migrate');
+      if (state.get('config','backend')) fail('native_migration_requires_default_backend', 5);
+      if (!['win32','darwin'].includes(process.platform)) fail('secure_backend_required', 4);
+      await (await import('./native.js')).migrateNativeStorage(join(home, 'encrypted-secrets'));
+      return reply({ migrated: true, nextAction: 'Run subsequent commands without --unlock. Existing profiles and approvals are preserved.' });
+    }
     if (command === 'profile') {
       if (pos[0] === 'list' && pos.length === 1) return reply({ profiles: state.list<Profile>('profile').map(row => publicProfile(row.value)) });
       if (pos[0] === 'remove' && pos.length === 2) { state.remove('profile', pos[1]); return reply({ removed: pos[1], notice: 'Local profile removed; remote authorization and backend secrets require explicit cleanup' }); }
       return fail('profile_list_or_remove_required');
     }
-    if (command === 'diagnostics') { need(0); return reply({ node: process.versions.node, platform: process.platform, storage: home, secureBackendConfigured: !!state.get('config','backend'), headless: !process.stdin.isTTY, execution: 'direct-sdk', browserOpening: 'manual-link' }); }
+    if (command === 'diagnostics') { need(0); const custom = !!state.get('config','backend'); return reply({ node: process.versions.node, platform: process.platform, storage: home, secureBackendConfigured: custom, defaultSecureBackend: custom ? 'custom' : process.platform === 'win32' ? 'windows-dpapi' : process.platform === 'darwin' ? 'macos-keychain' : 'none', secureBackendAvailability: 'not-probed', headless: !process.stdin.isTTY, execution: 'direct-sdk', browserOpening: 'manual-link' }); }
     if (command === 'retry-remove') {
       need(1);const row=state.get<any>('retry',pos[0]);if(!row)fail('unknown_retry');
       const {SqliteConversationStore}=await import('@poppykit/client/sqlite');const store=new SqliteConversationStore(join(home,'conversations.sqlite'));
@@ -117,7 +125,12 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
     if(backend.transport&&!deps.transport){transport.close?.();transport=cancelable(backend.transport,abort.signal);metadata=sdk.createMetadataResolver(transport);}
     if (['enroll','enroll-status','enroll-cancel'].includes(command) && p.enrollmentUrl) {
       need(0);
-      if (p.credentialRef) fail('already_enrolled',5);
+      if (p.credentialRef) {
+        if (command !== 'enroll-status') fail('already_enrolled',5);
+        if (JSON.stringify(state.get('enrollment',p.id)) !== JSON.stringify({provider:p.provider,domain:p.domain,installationId:p.installationId,clientId:p.clientId,callbackUrl:p.callbackUrl,credentialRef:p.credentialRef})) fail('enrollment_binding_conflict',5);
+        if (!await backend.secrets.read(p.credentialRef)) fail('secure_store_locked',4);
+        return reply({enrolled:true,clientId:p.clientId,nextAction:'Enrollment is already saved. Run connect, then auth-start for separate company consent.'});
+      }
       const { createBrowserEnrollmentClient } = await import('@poppykit/client/provider');
       const enrollment = createBrowserEnrollmentClient({url:p.enrollmentUrl,provider:p.provider,company:p.domain,installationId:p.installationId,transport});
       const pending = state.get<{requestId:string;secretRef:string;profileId:string;provider:string;domain:string;installationId:string;enrollmentUrl:string;cleanupOnly?:boolean}>('browser-enrollment',p.id);
@@ -276,11 +289,22 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
   } catch(error) {
     const known = error instanceof CliFailure, safe = error as { code?: string; retryAfterMs?: number };
     if(!abort.signal.aborted&&safe.code==='renewal_pending'&&retryHandle)return reply({status:'pending',sendOperation:retryHandle,nextAction:'retry_after_live_auth_finishes'});
-    const authCodes = ['anonymous_unavailable','sign_in_required','insufficient_scope','invalid_scope','unsupported_method','direct_unavailable','device_unavailable','mediated_unavailable','trusted_input_required','provider_unavailable','disconnected','invalid_grant','rate_limited','secure_store_locked','secure_store_unavailable','unauthorized','expired','canceled','consumed','binding_conflict'];
+    const authCodes = ['anonymous_unavailable','sign_in_required','insufficient_scope','invalid_scope','unsupported_method','direct_unavailable','device_unavailable','mediated_unavailable','trusted_input_required','provider_unavailable','provider_unauthorized','provider_rate_limited','provider_network_error','provider_invalid_response','provider_assertion_expired','provider_clock_skew','disconnected','invalid_grant','rate_limited','secure_store_locked','secure_store_unavailable','unauthorized','expired','canceled','consumed','binding_conflict'];
     const sdkCode = safe.code && authCodes.includes(safe.code) ? safe.code : undefined;
     const code = abort.signal.aborted ? 'canceled' : known ? error.code : sdkCode ?? 'operation_failed';
     // Fixed failure vocabulary: raw remote/provider/module/OS diagnostics never reach a harness.
-    return {out:{version:1,command,status:'error',requestId,error:{code}},code:abort.signal.aborted?130:known?error.exitCode:code==='consumed'?6:code==='binding_conflict'?5:['trusted_input_required','provider_unavailable','secure_store_locked','secure_store_unavailable'].includes(code)?4:['sign_in_required','insufficient_scope','unauthorized','invalid_grant'].includes(code)?3:1};
+    const hints: Record<string,string> = {
+      storage_migration_required: 'Run poppykit storage migrate in your own terminal once, then omit --unlock. Keep the passphrase out of chat.',
+      provider_clock_skew: 'Check automatic date/time on this computer. The provider assertion is too far in the future; retry after synchronizing the clock.',
+      provider_assertion_expired: 'Check automatic date/time on this computer and retry. The provider assertion has already expired.',
+      provider_unauthorized: 'This provider rejected the saved enrollment. Review its status or revocation before enrolling again.',
+      provider_rate_limited: 'The provider rate-limited this request. Wait before retrying.',
+      provider_network_error: 'Could not complete a secure provider request. Check connectivity and retry.',
+      provider_invalid_response: 'The provider returned an invalid response. Report the command, error code and approximate UTC time; do not share credentials.',
+      provider_unavailable: 'The provider could not complete this request. Report the command, error code and approximate UTC time.',
+      secure_store_locked: 'Unlock your OS vault, or use the correct attended passphrase. Do not put credentials in chat.',
+    };
+    return {out:{version:1,command,status:'error',requestId,error:{code,...(hints[code]?{nextAction:hints[code]}:{})}},code:abort.signal.aborted?130:known?error.exitCode:code==='consumed'?6:code==='binding_conflict'?5:['trusted_input_required','provider_unavailable','secure_store_locked','secure_store_unavailable'].includes(code)?4:['sign_in_required','insufficient_scope','unauthorized','invalid_grant','provider_unauthorized'].includes(code)?3:1};
   } finally { process.off('SIGINT',canceled);process.off('SIGTERM',canceled);for(const dispose of [()=>authStore?.close(),()=>conversationStore?.close(),()=>transport?.close?.(),()=>backend?.close?.(),()=>state?.close()])try{await dispose();}catch{/* Cleanup adapters cannot expose private errors. */} }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {

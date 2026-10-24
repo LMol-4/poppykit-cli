@@ -49,3 +49,5 @@ coverage/
 /scripts/install-candidate.mjs
 
 /tests/license.test.mjs
+/scripts/native-smoke.mjs
+/test-support/native-worker.mjs
