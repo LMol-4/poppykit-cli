@@ -39,7 +39,11 @@ try {
     $phase = 'encrypt'
     $bytes = [Security.Cryptography.ProtectedData]::Protect([Text.Encoding]::UTF8.GetBytes($r.value),$entropy,[Security.Cryptography.DataProtectionScope]::CurrentUser)
     $phase = 'write'
-    $stream = New-Object IO.FileStream($file,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+    $fileAcl = New-Object Security.AccessControl.FileSecurity
+    $fileAcl.SetOwner($sid)
+    $fileAcl.SetAccessRuleProtection($true,$false)
+    $fileAcl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl','Allow')))
+    $stream = New-Object IO.FileStream($file,[IO.FileMode]::CreateNew,[Security.AccessControl.FileSystemRights]::FullControl,[IO.FileShare]::None,4096,[IO.FileOptions]::WriteThrough,$fileAcl)
     try { $stream.Write($bytes,0,$bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
     $phase = 'file_permissions'
     Check $file
