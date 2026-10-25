@@ -13,7 +13,7 @@ import type { ClientAuth, HttpTransport, Connection, AuthOutcome, SignInStart } 
 import { openApprovalBrowser, waitForApproval } from './approval.js';
 
 export const HELP = `Usage: poppykit <command> [--json] [--profile NAME] [--unlock]
-Node 24 >=24.22.1 (24.x only). Direct SDK execution; no daemon. Native Windows DPAPI/macOS Keychain/Linux Secret Service custody.
+Node 24 >=24.21.0 (24.x only). Direct SDK execution; no daemon. Native Windows DPAPI/macOS Keychain/Linux Secret Service custody.
   setup --provider HTTPS_URL --company DOMAIN [--enrollment HTTPS_URL] [--profile NAME]
   backend --module ABSOLUTE_TRUSTED_MODULE
   storage migrate                 adopt attended storage into the native vault
@@ -50,7 +50,7 @@ const publicOutcome = ({operationId,status,connection,error,grantedScopes,missin
 const publicStart = ({outcome,authorizationUrl,device}:SignInStart):SignInStart => ({outcome:publicOutcome(outcome),authorizationUrl,...(device?{device:{verificationUri:device.verificationUri,verificationUriComplete:device.verificationUriComplete,userCode:device.userCode,organization:{name:device.organization.name,domain:device.organization.domain},nextPollAt:device.nextPollAt}}:{})});
 const publicProfile = (p: Profile) => ({ id: p.id, name: p.name, provider: p.provider, domain: p.domain, installationId: p.installationId, enrolled: !!p.credentialRef, connectionId: p.connectionId });
 function url(value: string): string { try { const u = new URL(value); if (u.protocol !== 'https:' || u.username || u.password || u.hash || u.search || /[\s\\]/.test(value)) fail('https_url_required'); return u.href; } catch { return fail('https_url_required'); } }
-function runtimeSupported(version: string): boolean { if (!/^24\.\d+\.\d+$/.test(version)) return false; const [major, minor, patch] = version.split('.').map(Number); return major === 24 && (minor > 22 || minor === 22 && patch >= 1); }
+function runtimeSupported(version: string): boolean { if (!/^24\.\d+\.\d+$/.test(version)) return false; const [major, minor] = version.split('.').map(Number); return major === 24 && minor >= 21; }
 export { runtimeSupported };
 function cancelable(transport:HttpTransport,signal:AbortSignal):HttpTransport {
   const call=(request:Request,options?:Parameters<HttpTransport['fetch']>[1],stream=false)=>new Promise<Response>((resolve,reject)=>{
@@ -72,7 +72,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
   const abort = new AbortController(), canceled = () => {boundedWatchComplete=false;abort.abort();};
   process.once('SIGINT', canceled); process.once('SIGTERM', canceled);
   try {
-    if (!runtimeSupported(process.versions.node)) fail('node_24_22_1_required', 1);
+    if (!runtimeSupported(process.versions.node)) fail('node_24_21_0_required', 1);
     if (argv.length === 0 || argv.length === 1 && ['help','--help'].includes(command)) return { out: HELP, code: 0 };
     const options = { json: { type: 'boolean' }, profile: { type: 'string' }, unlock: { type: 'boolean' }, 'no-wait': {type:'boolean'}, 'no-open': {type:'boolean'}, 'wait-timeout': {type:'string'}, provider: { type: 'string' }, enrollment: { type: 'string' }, company: { type: 'string' }, module: { type: 'string' }, scope: { type: 'string', multiple: true }, method: { type: 'string' }, connection: { type: 'string' }, text: { type: 'string' }, 'send-operation': { type: 'string' }, cursor: { type: 'string' }, consumer: { type: 'string' }, anonymous: { type: 'boolean' }, api: { type: 'string' }, destination: { type: 'string' }, 'return-to': { type: 'string' }, task: { type: 'string' }, description: { type: 'string' } } as const;
     let parsed; try { parsed = parseArgs({ args: argv.slice(1), options, allowPositionals: true }); } catch { return fail('invalid_arguments'); }

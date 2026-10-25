@@ -95,7 +95,11 @@ async function fixture(){
   return {home,backend,provider,transport,run,ok,sent,secrets,setLoseSend:()=>loseSend=true,setUnavailable:(value:boolean)=>unavailable=value,close:async()=>{store.close();await rm(home,{recursive:true,force:true});}};
 }
 test('offline startup, runtime floor, stable JSON and no secure backend fallback',async()=>{
-  for(const version of ['24.12.0','24.22.0','25.0.0','26.22.1','24.22.1-rc.1','24.22','broken'])assert.equal(runtimeSupported(version),false,version);for(const version of ['24.22.1','24.22.2','24.23.0'])assert.equal(runtimeSupported(version),true,version);
+  const minimum=(await readFile(new URL('../.node-version',import.meta.url),'utf8')).trim();
+  assert.equal(runtimeSupported(minimum),true);
+  const [major,minor,patch]=minimum.split('.').map(Number);
+  assert.equal(runtimeSupported(patch?`${major}.${minor}.${patch-1}`:`${major}.${minor-1}.99`),false);
+  for(const version of ['24.12.0','24.20.99','25.0.0','26.22.1','24.21.0-rc.1','24.22','broken'])assert.equal(runtimeSupported(version),false,version);for(const version of ['24.21.0','24.21.1','24.22.0','24.22.2','24.23.0'])assert.equal(runtimeSupported(version),true,version);
   const home=await mkdtemp(join(tmpdir(),'startup ü '));try{
     const help=await main(['--help'],{POPPYKIT_HOME:join(home,'absent')});assert.equal(help.code,0);assert.ok(typeof help.out==='string');assert.match(help.out,/no daemon/);assert.deepEqual(await readdir(home),[]);
     const invalid=await main(['send','--password','SECRET'],{POPPYKIT_HOME:home});assert.equal(invalid.code,2);assert.ok(!JSON.stringify(invalid).includes('SECRET'));

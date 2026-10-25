@@ -1,2 +1,3 @@
 *.mts text eol=lf
 *.m text eol=lf
+.node-version text eol=lf
