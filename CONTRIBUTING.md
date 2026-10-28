@@ -1,7 +1,7 @@
 # Contributing
 
-Follow the live draft 0.2 [specification](https://personalagentprotocol.org/docs/0.2/spec)
-and [guides](https://personalagentprotocol.org/docs/0.2/guides). Tests/snapshots are
+Follow the live draft 0.3 [specification](https://personalagentprotocol.org/docs/0.3/spec)
+and [guides](https://personalagentprotocol.org/docs/0.3/guides). Tests/snapshots are
 supporting evidence. Demo/business workflows and individual extensions are excluded.
 Code is [MIT](LICENSE); confirm rights for third-party contributions.
 

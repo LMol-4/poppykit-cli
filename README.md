@@ -1,18 +1,19 @@
 # PoppyKit CLI
 
-Unreleased migration checkpoint (2026-10-28): discovery now targets draft 0.3.
-Authentication, conversation wire/storage and optional integrations still have
-staged migration work; this checkout is not ready to publish or deploy as 0.3.
+Unreleased draft 0.3 candidate (2026-10-28), pinned to the public source captured that day.
+Client/CLI 0.5.0 and server 0.4.0 are breaking local candidates. Publication,
+deployment and live acceptance remain separate; stop old writers and follow the
+documented storage/reset procedure before compatible writers resume.
 
 The Node 24.21.0 minimum is an owner-accepted compatibility baseline. Use a current patched Node 24 runtime where available; this minimum does not establish that older runtimes contain later security fixes. Build and release CI read `.node-version`.
 
-Terminal client for [Personal Agent Protocol draft 0.2](https://personalagentprotocol.org/docs/0.2/spec),
+Terminal client for [Personal Agent Protocol draft 0.3](https://personalagentprotocol.org/docs/0.3/spec),
 built on the client SDK. Discover companies, authenticate and exchange conversations
 or use verified integration hooks. [MIT](LICENSE).
 
 ## Install
 
-This guide targets version 0.4.1. Verify its registry publication before installing;
+This guide targets version 0.5.0. Verify its registry publication before installing;
 older releases lack the repaired browser-wait and native-custody journey.
 Check installed help for `auth-wait`.
 `enroll` and `auth-start` wait for browser decisions and return to a running calling
@@ -31,7 +32,7 @@ automatic browser opener is required. npm installs the exact client dependency;
 there is no server SDK dependency and Node is not bundled.
 
 ```sh
-npm install --global @poppykit/cli@0.4.1
+npm install --global @poppykit/cli@0.5.0
 ```
 
 ## Start offline

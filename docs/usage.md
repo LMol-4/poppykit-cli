@@ -36,7 +36,7 @@ separately configured backend. Export/retain needed records before manual reset.
 
 ## Secure storage and trusted input
 
-This document describes version 0.4.1. Check the published version
+This document describes version 0.5.0. Check the published version
 and installed help before using its new native-storage or migration commands.
 
 Linux uses the standard Secret Service through `/usr/bin/secret-tool` and the
@@ -49,7 +49,7 @@ files have user-only ACLs, verified on every access. Missing user profile/DPAPI,
 unsafe ACLs, reparse points or tampered files fail closed. DPAPI protects storage
 at rest; arbitrary code running as the same Windows user can decrypt it.
 
-CLI 0.4.1 automatically uses the default macOS Keychain to protect a random
+CLI 0.5.0 automatically uses the default macOS Keychain to protect a random
 wrapping key for the AES-256-GCM local ciphertext vault. The bundled universal
 arm64/x86_64 Security.framework helper receives secrets through private pipes;
 no compiler, Xcode, daemon, per-command passphrase or visitor-written adapter is
@@ -326,7 +326,7 @@ A public setup prompt contains only these four fields (use an actual published
 or locally supplied candidate version):
 
 ```text
-Package: @poppykit/cli@0.4.1 (verify publication before registry install)
+Package: @poppykit/cli@0.5.0 (verify publication before registry install)
 Provider: https://identity.example/v1
 Company: company.example
 Task: Ask about the available services.
