@@ -81,13 +81,13 @@ test('initiating enrollment waits, tolerates rate limiting, preserves cancellati
 async function fixture(){
   const home=await mkdtemp(join(tmpdir(),'poppy ü spaces ')),secrets=new Map<string,string>(),store=new SqliteProviderStore(join(home,'provider.sqlite'));
   const backend:SecureBackend={secrets:{async stage(v){const id=randomUUID();secrets.set(id,v);return id;},async read(id){return secrets.get(id)??null;},async remove(id){secrets.delete(id);}},async healthCheck(){},async enrollmentAuth(){return {'x-human':'yes'};},trustedInput:{async collect(req):Promise<Record<string,string>>{return req.challenge?{code:'PRIVATE_OTP'}:{password:'PRIVATE_PASSWORD'};}}};
-  const doc:Awaited<ReturnType<MetadataResolver['resolveCompany']>>['document']={protocol_version:'0.2',organization:{name:'Generic',domain:'company.example'},auth:{issuer,direct:{scopes:['poppy:read']},device:{scopes:['poppy:read']},mediated:{endpoint:'https://company.example/mediated',fields:[{name:'password',label:'Password',secret:true}],scopes:['poppy:read']}},agent:{protocols:[{type:'poppy',endpoint:'https://company.example/conversations'}]}};
-  const authorization={issuer,token_endpoint:'https://company.example/token',revocation_endpoint:'https://company.example/revoke',poppy_domains:['company.example'],authorization_endpoint:'https://company.example/authorize',device_authorization_endpoint:'https://company.example/device'};
+  const doc:Awaited<ReturnType<MetadataResolver['resolveCompany']>>['document']={protocol_version:'0.3',organization:{name:'Generic',domain:'company.example'},auth:{issuer,scopes:{'orders:read':'Read orders'},mediated:{endpoint:'https://company.example/mediated',fields:[{name:'password',label:'Password',secret:true}],scopes:['orders:read']}},agent:{protocols:[{type:'poppy',endpoint:'https://company.example/conversations'}]}};
+  const authorization={issuer,token_endpoint:'https://company.example/token',revocation_endpoint:'https://company.example/revoke',protected_resources:['https://company.example'],grant_types_supported:['urn:ietf:params:oauth:grant-type:jwt-bearer','refresh_token','authorization_code','urn:ietf:params:oauth:grant-type:device_code'],scopes_supported:['orders:read'],authorization_endpoint:'https://company.example/authorize',device_authorization_endpoint:'https://company.example/device'};
   const key=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);
   const metadata:MetadataResolver={resolveClient:async()=>{throw new Error('unexpected client lookup');},resolveJwks:async()=>{throw new Error('unexpected JWKS lookup');},resolveCompany:async()=>({url:'https://company.example/.well-known/poppy.json',document:doc,authorization})};
   const provider=createProvider({clientId,callbackUrl,jwksUri:'https://identity.example/jwks',clientName:'Generic',store,cipher:createResultCipher(randomBytes(32)),metadata,signer:{kid:'key',publicJwk:()=>publicEcJwk(key.publicKey),sign:async bytes=>new Uint8Array(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},key.privateKey,new Uint8Array(bytes)))},authenticateEnrollment:async request=>request.headers.get('x-human')==='yes'?{subject:'human',allowedCompanies:['company.example']}:null});
   const sent:unknown[]=[];let loseSend=false,unavailable=false,mediated=0;
-  const token=(signedIn:boolean,session='session1')=>({access_token:signedIn?'PRIVATE_ACCESS':'PRIVATE_SESSION',token_type:'DPoP',expires_in:300,session_id:session,signed_in:signedIn,scope:signedIn?'poppy:read':'',...(signedIn?{refresh_token:'PRIVATE_ACCOUNT'}:{})});
+  const token=(signedIn:boolean,session='session1')=>({access_token:signedIn?'PRIVATE_ACCESS':'PRIVATE_SESSION',token_type:'DPoP',expires_in:300,session_id:session,signed_in:signedIn,scope:signedIn?'orders:read':'',...(signedIn?{refresh_token:'PRIVATE_ACCOUNT'}:{})});
   const transport:HttpTransport={async fetch(request){const u=new URL(request.url);if(u.hostname==='identity.example')return provider.handle(request);if(u.pathname==='/.well-known/poppy.json')return Response.json(doc);if(u.pathname==='/.well-known/oauth-authorization-server/issuer')return Response.json(authorization);if(u.pathname==='/token'){const form=new URLSearchParams(await request.text());return Response.json(token(form.get('grant_type')!=='urn:ietf:params:oauth:grant-type:jwt-bearer',form.get('session_id')??'session1'));}if(u.pathname==='/device')return Response.json({device_code:'PRIVATE_DEVICE',user_code:'USER-CODE',verification_uri:'https://company.example/verify',expires_in:600,interval:1});if(u.pathname.startsWith('/mediated')){mediated++;const body=await request.json();if(mediated===1){assert.equal(body.credentials.password,'PRIVATE_PASSWORD');return Response.json({status:'code_required',sign_in_id:'challenge1',code:{sent_to:'email'},expires_at:new Date(Date.now()+600000).toISOString()});}assert.equal(body.code,'PRIVATE_OTP');return Response.json({status:'complete',...token(true)});}if(u.pathname==='/revoke')return new Response(null,{status:200});if(u.pathname.startsWith('/conversations')){if(request.method==='POST'){sent.push(await request.json());if(unavailable)return Response.json({error:'PRIVATE_REMOTE_BODY'},{status:503});if(loseSend){loseSend=false;throw new Error('PRIVATE_FAILURE');}return Response.json({conversation_id:'conversation1',status:'idle',responder:'agent'});}return Response.json({conversation_id:'conversation1',status:'idle',responder:'agent',events:[],cursor:null,has_more:false});}throw new Error('unexpected fixture destination '+request.url);}};
   const run=async (args:string[])=>{const r=await main([...args,'--no-wait','--json'],{POPPYKIT_HOME:home},{backend,transport});return {...r,out:reply(r.out)};};
   const ok=async (args:string[])=>{const result=await run(args);assert.equal(result.code,0,JSON.stringify(result.out));assert.equal(typeof result.out,'object');return result.out.result;};
@@ -158,12 +158,12 @@ test('native reference publication survives a partial staging file and keeps one
 test('Direct enrollment, callback, restart completion and sign-out redact all credentials',async()=>{
   const f=await fixture();try{
     const connection=await f.ok(['connect']);assert.equal(connection.connection.status,'signed_out');
-    const start=await f.ok(['auth-start','--method','direct','--scope','poppy:read']);const op=start.outcome.operationId;
+    const start=await f.ok(['auth-start','--method','direct','--scope','orders:read']);const op=start.outcome.operationId;
     const authorization=new URL(start.authorizationUrl);assert.equal(authorization.hostname,'company.example');
     const callback=new URL(callbackUrl);callback.searchParams.set('state',expectValue(authorization.searchParams.get('state')));callback.searchParams.set('iss',issuer);callback.searchParams.set('code','PRIVATE_CODE');await f.provider.callback(callback.href);
     const result=await f.ok(['auth-continue',op]);assert.equal(result.status,'completed');assert.equal(result.connection.status,'signed_in');
     assert.ok(!JSON.stringify([connection,start,result]).includes('PRIVATE_'));
-    const scopes=await f.ok(['scopes','--scope','poppy:read']);assert.equal(scopes.sufficient,true);
+    const scopes=await f.ok(['scopes','--scope','orders:read']);assert.equal(scopes.sufficient,true);
     const signedOut=await f.ok(['sign-out']);assert.equal(signedOut.connection.status,'disconnected');
   }finally{await f.close();}
 });
@@ -172,7 +172,7 @@ test('initiating direct command returns approval or denial automatically and reu
   for(const decision of ['approve','deny']) {
     const f=await fixture();try {
       await f.ok(['connect']);let links=0;
-      const run=()=>main(['auth-start','--scope','poppy:read','--json'],{POPPYKIT_HOME:f.home},{backend:f.backend,transport:f.transport,progress:value=>assert.ok(!JSON.stringify(value).includes('PRIVATE_')),openBrowser:async link=>{
+      const run=()=>main(['auth-start','--scope','orders:read','--json'],{POPPYKIT_HOME:f.home},{backend:f.backend,transport:f.transport,progress:value=>assert.ok(!JSON.stringify(value).includes('PRIVATE_')),openBrowser:async link=>{
         links++;const callback=new URL(callbackUrl);callback.searchParams.set('state',new URL(link).searchParams.get('state')!);callback.searchParams.set('iss',issuer);callback.searchParams.set(decision==='approve'?'code':'error',decision==='approve'?'PRIVATE_CODE':'access_denied');await f.provider.callback(callback.href);
       }});
       const result=await run();assert.equal(result.code,decision==='approve'?0:3);
@@ -186,7 +186,7 @@ test('initiating direct command returns approval or denial automatically and reu
 test('bounded direct wait resumes the same operation after timeout and rejects concurrent consumers',async()=>{
   const f=await fixture();try {
     await f.ok(['connect']);let link='',operationId='';
-    const args=['auth-start','--scope','poppy:read','--wait-timeout','1','--json'];
+    const args=['auth-start','--scope','orders:read','--wait-timeout','1','--json'];
     const first=await main(args,{POPPYKIT_HOME:f.home},{backend:f.backend,transport:f.transport,openBrowser:async value=>{link=value;},progress:value=>{operationId=(value as {operationId:string}).operationId;}});
     assert.equal(first.code,0);assert.equal(reply(first.out).result.status,'pending');assert.ok(operationId);
     const callback=new URL(callbackUrl);callback.searchParams.set('state',new URL(link).searchParams.get('state')!);callback.searchParams.set('iss',issuer);callback.searchParams.set('code','PRIVATE_CODE');await f.provider.callback(callback.href);
@@ -209,7 +209,7 @@ test('lost one-time direct retrieval reports uncertainty and never consumes agai
   try {
     await f.ok(['connect']);let takes=0,operationId='';
     const transport:HttpTransport={async fetch(request,options){const response=await f.transport.fetch(request,options);if(request.url.endsWith('/takeResult')){takes++;await new Promise<void>(resolve=>release=resolve);}return response;}};
-    const result=await main(['auth-start','--scope','poppy:read','--wait-timeout','1'],{POPPYKIT_HOME:f.home},{backend:f.backend,transport,progress:value=>operationId=(value as {operationId:string}).operationId,openBrowser:async link=>{
+    const result=await main(['auth-start','--scope','orders:read','--wait-timeout','1'],{POPPYKIT_HOME:f.home},{backend:f.backend,transport,progress:value=>operationId=(value as {operationId:string}).operationId,openBrowser:async link=>{
       const callback=new URL(callbackUrl);callback.searchParams.set('state',new URL(link).searchParams.get('state')!);callback.searchParams.set('iss',issuer);callback.searchParams.set('code','PRIVATE_CODE');await f.provider.callback(callback.href);
     }});
     assert.equal(result.code,6);assert.equal(reply(result.out).result.status,'uncertain');release?.();
@@ -224,7 +224,7 @@ test('received callback stays encrypted and resumes locally without another prov
     await f.ok(['connect']);let operationId='',takes=0,failRead=true;
     const backend:SecureBackend={...f.backend,secrets:{...f.backend.secrets,async read(ref){const value=await f.backend.secrets.read(ref);if(failRead&&value?.startsWith(callbackUrl+'?')){failRead=false;throw new Error('PRIVATE_INTERRUPTION');}return value;}}};
     const transport:HttpTransport={async fetch(request,options){if(request.url.endsWith('/takeResult'))takes++;return f.transport.fetch(request,options);}};
-    const first=await main(['auth-start','--scope','poppy:read'],{POPPYKIT_HOME:f.home},{backend,transport,progress:value=>operationId=(value as {operationId:string}).operationId,openBrowser:async link=>{
+    const first=await main(['auth-start','--scope','orders:read'],{POPPYKIT_HOME:f.home},{backend,transport,progress:value=>operationId=(value as {operationId:string}).operationId,openBrowser:async link=>{
       const callback=new URL(callbackUrl);callback.searchParams.set('state',new URL(link).searchParams.get('state')!);callback.searchParams.set('iss',issuer);callback.searchParams.set('code','PRIVATE_CODE');await f.provider.callback(callback.href);
     }});
     assert.equal(first.code,1);assert.ok(!JSON.stringify(first).includes('PRIVATE_'));
@@ -245,7 +245,7 @@ test('lost enrollment redemption reports uncertainty and requires explicit clean
 });
 test('Device and Mediated sign-in restart through SDK lifecycle and trusted input',async()=>{
   for(const method of ['device','mediated']){const f=await fixture();try{
-    await f.ok(['connect']);const start=await f.ok(['auth-start','--method',method,'--scope','poppy:read']);assert.equal(start.outcome.status,'pending');
+    await f.ok(['connect']);const start=await f.ok(['auth-start','--method',method,'--scope','orders:read']);assert.equal(start.outcome.status,'pending');
     if(method==='device'){assert.equal(start.device.userCode,'USER-CODE');await new Promise(r=>setTimeout(r,1100));}
     const complete=await f.ok(['auth-continue',start.outcome.operationId]);assert.equal(complete.status,'completed');assert.equal(complete.connection.status,'signed_in');assert.ok(!JSON.stringify([start,complete]).includes('PRIVATE_'));
   }finally{await f.close();}}
@@ -276,7 +276,7 @@ test('company 503 retains the generated send handle and exact retry without expo
   }finally{await f.close();}
 });
 test('cancel and backend errors do not expose secrets or raw adapter failures',async()=>{
-  const f=await fixture();try{await f.ok(['connect']);const start=await f.ok(['auth-start','--method','direct','--scope','poppy:read']);const result=await f.run(['auth-cancel',start.outcome.operationId]);assert.equal(result.code,130);assert.equal(result.out.result.status,'cancelled');
+  const f=await fixture();try{await f.ok(['connect']);const start=await f.ok(['auth-start','--method','direct','--scope','orders:read']);const result=await f.run(['auth-cancel',start.outcome.operationId]);assert.equal(result.code,130);assert.equal(result.out.result.status,'cancelled');
     f.backend.healthCheck=async()=>{throw new Error('PRIVATE_BACKEND_ERROR')};const failed=await f.run(['connections']);assert.equal(failed.code,1);assert.ok(!JSON.stringify(failed).includes('PRIVATE_BACKEND_ERROR'));
   }finally{await f.close();}
 });
@@ -289,7 +289,7 @@ test('separate processes concurrently create profiles without lost writes',async
 });
 test('invocation cancellation fences a late Direct token response and retains uncertainty',async()=>{
   const f=await fixture();let release:(()=>void)|undefined;try{
-    await f.ok(['connect']);const started=await f.ok(['auth-start','--method','direct','--scope','poppy:read']);
+    await f.ok(['connect']);const started=await f.ok(['auth-start','--method','direct','--scope','orders:read']);
     const u=new URL(callbackUrl);u.searchParams.set('state',expectValue(new URL(started.authorizationUrl).searchParams.get('state')));u.searchParams.set('iss',issuer);u.searchParams.set('code','PRIVATE_CODE');await f.provider.callback(u.href);
     const original=f.transport.fetch;let reached:()=>void=()=>{throw new Error('uninitialized ready');};const ready=new Promise<void>(r=>reached=r),gate=new Promise<void>(r=>release=r);
     f.transport.fetch=async req=>{if(new URL(req.url).pathname==='/token'&&(await req.clone().text()).includes('authorization_code')){reached();await gate;}return original(req);};
@@ -401,7 +401,7 @@ test('read and watch preserve exact opaque fields; typed failures expose only va
 test('terminal Direct recovery retires references after expiry or committed-result cleanup failure',async()=>{
   for(const mode of ['expired','completed','denied']){
     const f=await fixture();try{
-      await f.ok(['connect']);const start=await f.ok(['auth-start','--scope','poppy:read']),op=start.outcome.operationId;
+      await f.ok(['connect']);const start=await f.ok(['auth-start','--scope','orders:read']),op=start.outcome.operationId;
       const state=new State(join(f.home,'cli.sqlite')),profile=state.profile(),direct=state.get<{secretRef:string;resultRef?:string}>('direct',op)!;state.close();
       let redemptions=0;const fetch=f.transport.fetch;f.transport.fetch=async request=>{if(request.url.endsWith('/takeResult'))redemptions++;return fetch(request);};
       if(mode==='expired'){
@@ -445,5 +445,16 @@ test('typed auth retry deadlines preserve decimal precision and ignore raw failu
     const typed=(await f.run(['connections'])).out.toJSON().error as Record<string,unknown>;assert.equal(typed.retryAfterMs,2000);assert.equal(typed.retryAt,undefined);
     f.backend.healthCheck=async()=>{throw {code:'rate_limited',retryAt:'1792860000000',requiredScopes:['PRIVATE_RAW_SCOPES'],message:'PRIVATE_RAW_ERROR'};};
     const raw=await f.run(['connections']);assert.deepEqual(raw.out.toJSON().error,{code:'rate_limited'});assert.ok(!JSON.stringify(raw).includes('PRIVATE_'));
+  }finally{await f.close();}
+});
+
+test('discovery and scopes show issuer-selected methods and company descriptions',async()=>{
+  const f=await fixture();try{
+    const found=(await f.ok(['discovery'])).toJSON();
+    assert.deepEqual(found.authMethods,['direct','device','mediated']);
+    assert.deepEqual(found.scopes,['orders:read']);assert.deepEqual(found.scopeDescriptions,{'orders:read':'Read orders'});
+    await f.ok(['connect']);const scopes=await f.ok(['scopes']);
+    assert.deepEqual(scopes.methods.map((item:{method:string})=>item.method),found.authMethods);
+    assert.deepEqual(scopes.toJSON().scopeDescriptions,found.scopeDescriptions);
   }finally{await f.close();}
 });

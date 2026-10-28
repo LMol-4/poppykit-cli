@@ -11,13 +11,19 @@ poppykit setup --provider https://identity.example/v1 --company company.example 
 # Optional custom backend only:
 poppykit backend --module /absolute/path/to/operator-backend.mjs --json
 poppykit enroll --profile work --json
+poppykit discovery --profile work --json
 poppykit connect --profile work --json
-poppykit auth-start --profile work --method device --scope poppy:read --json
+poppykit auth-start --profile work --method device --scope orders:read --json
 poppykit auth-continue OPERATION_ID --profile work --json
 poppykit start --profile work --text 'A generic task' --send-operation task1 --json
 poppykit retry task1 --profile work --json
 poppykit sign-out --profile work --json
 ```
+
+`discovery` reports issuer-selected `authMethods`, `scopes` and company
+`scopeDescriptions`. `scopes` reports current authority and methods plus those
+descriptions. Use the company's advertised scopes; `orders:read` above is only an
+example. Prefer Direct when a registered callback is available.
 
 On Windows an absolute module path can be `C:\secure\operator-backend.mjs`.
 The backend is trusted operator code chosen locally; company or provider metadata

@@ -132,7 +132,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
     sdk = deps.sdk ?? await import('@poppykit/client');
     transport = cancelable(deps.transport ?? sdk.createNodeTransport(),abort.signal);
     let metadata = sdk.createMetadataResolver(transport);
-    if (command === 'discovery') { need(0); const found = await metadata.resolveCompany(p.domain); return reply({ organization: found.document.organization, issuer: found.authorization?.issuer, authMethods: ['direct','device','mediated'].filter(method => !!found.document.auth?.[method]), apis: found.document.apis?.map(api => ({ type: api.type, url: api.url, resource: api.resource })), browser: !!found.document.web?.browser_session_endpoint, feedback: !!found.document.feedback }); }
+    if (command === 'discovery') { need(0); const found = await metadata.resolveCompany(p.domain); return reply({ organization: found.document.organization, issuer: found.authorization?.issuer, authMethods: sdk.signInMethods(found).map(item => item.method), scopes: found.authorization?.scopes_supported ?? [], scopeDescriptions: found.document.auth?.scopes ?? {}, apis: found.document.apis?.map(api => ({ type: api.type, url: api.url, resource: api.resource })), browser: !!found.document.web?.browser_session_endpoint, feedback: !!found.document.feedback }); }
     const config = state.get<{ module: string }>('config','backend');
     backend = deps.backend ?? await openBackend({ module: config?.module, unlock: v.unlock, directory: join(home, 'encrypted-secrets') });
     if (deps.backend) await backend.healthCheck();
