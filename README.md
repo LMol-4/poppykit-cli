@@ -1,39 +1,15 @@
 # PoppyKit CLI
 
-Draft 0.3 migration (2026-10-28), pinned to the public source captured that day.
-Client/CLI 0.5.0 and server 0.4.0 break the earlier protocol contracts. Stop old
-writers and follow the documented storage/reset procedure before compatible
-writers resume. Registry, deployment and live acceptance have separate receipts.
-
-The Node 24.21.0 minimum is an owner-accepted compatibility baseline. Use a current patched Node 24 runtime where available; this minimum does not establish that older runtimes contain later security fixes. Build and release CI read `.node-version`.
-
-Terminal client for [Personal Agent Protocol draft 0.3](https://personalagentprotocol.org/docs/0.3/spec),
-built on the client SDK. Discover companies, authenticate and exchange conversations
-or use verified integration hooks. [MIT](LICENSE).
+Terminal client for [Personal Agent Protocol draft 0.3](https://personalagentprotocol.org/docs/0.3/spec).
+Discover companies, authenticate and exchange conversations. [MIT](LICENSE).
 
 ## Install
-
-This guide targets version 0.5.0. Verify its registry publication before installing;
-older releases lack the repaired browser-wait and native-custody journey.
-Check installed help for `auth-wait`.
-`enroll` and `auth-start` wait for browser decisions and return to a running calling
-agent automatically. See [bounded waits and recovery](docs/usage.md); a terminated
-agent needs a new invocation to resume its saved request.
-
-Requires **Node 24, version 24.21.0 or later within 24.x**, and npm on Windows,
-macOS or Linux. Verification workflows pin Node 24.21.0;
-later majors are not separately certified. Windows default custody uses its bundled
-hidden PowerShell/DPAPI helper. macOS uses Keychain through a bundled universal
-native helper; users do not need a compiler or Xcode installation. Linux uses
-Secret Service through the system `secret-tool` command and an unlocked
-desktop keyring/session D-Bus; see [Linux prerequisites and recovery](docs/linux.md).
-No daemon or
-automatic browser opener is required. npm installs the exact client dependency;
-there is no server SDK dependency and Node is not bundled.
 
 ```sh
 npm install --global @poppykit/cli@0.5.0
 ```
+
+Linux requires `secret-tool` and an unlocked desktop keyring; see [Linux setup](docs/linux.md).
 
 ## Start offline
 
