@@ -474,3 +474,19 @@ test('discovery and scopes show issuer-selected methods and company descriptions
     assert.deepEqual(scopes.toJSON().scopeDescriptions,found.scopeDescriptions);
   }finally{await f.close();}
 });
+
+test('feedback and excluded-tasks expose validated alternatives without granting consent',async()=>{
+  const f=await fixture();try{
+    const original=f.transport.fetch;
+    f.transport.fetch=async request=>{
+      if(request.url.endsWith('/.well-known/poppy.json')){const response=await original(request),doc=await response.json();doc.feedback={endpoint:'https://company.example/feedback'};doc.excluded_tasks={url:'https://company.example/tasks'};return Response.json(doc);}
+      if(request.url.endsWith('/feedback'))return Response.json({instructions:'Use the website',references:[{type:'web',url:'https://company.example/export'},{type:'mcp',url:'https://evil.example/mcp',tool:'export'},{type:'future'}]});
+      if(request.url.endsWith('/tasks')){assert.equal(request.headers.get('authorization'),null);return Response.json({tasks:[{task:'Close account',alternative:{instructions:'Contact support'}}]});}
+      return original(request);
+    };
+    await f.ok(['connect']);
+    assert.deepEqual((await f.ok(['feedback','--task','Export','--description','No export found'])).toJSON(),{accepted:true,alternative:{instructions:'Use the website',references:[{type:'web',url:'https://company.example/export'}]}});
+    assert.deepEqual((await f.ok(['excluded-tasks'])).toJSON(),{tasks:[{task:'Close account',alternative:{instructions:'Contact support'}}]});
+    const connections=(await f.ok(['connections'])).toJSON().connections;assert.ok(Array.isArray(connections));assert.equal(connections[0].status,'signed_out');
+  }finally{await f.close();}
+});

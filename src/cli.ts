@@ -19,6 +19,7 @@ Node 24 >=24.21.0 (24.x only). Direct SDK execution; no daemon. Native Windows D
   storage migrate                 adopt attended storage into the native vault
   profile list | profile remove NAME
   enroll | enroll-status | enroll-cancel  browser enrollment when configured
+  excluded-tasks                 read company task exclusions as data
   discovery | connect [--anonymous] | connections | scopes [--scope S]
   auth-start --method direct|device|mediated --scope S [--scope S]
   auth-status OP | auth-continue OP | auth-cancel OP | sign-out
@@ -87,7 +88,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       if (value.browserUrl && !v['no-open']) try { await (deps.openBrowser ?? openApprovalBrowser)(value.browserUrl); } catch { deps.progress?.({notice:'Open the approval link in your browser.'}); }
     };
     const beginWait = (handle:NonNullable<typeof resume>) => { resume=handle; approvalTimer=setTimeout(()=>{approvalTimedOut=true;abort.abort();},timeoutSeconds*1000); };
-    const commands = ['setup','backend','storage','profile','enroll','enroll-status','enroll-cancel','discovery','connect','connections','scopes','auth-start','auth-status','auth-continue','auth-wait','auth-cancel','sign-out','start','send','retry','status','retry-remove','read','watch','ack','handoff','close','api-target','api-request','browser-join','feedback','diagnostics','enrollment-revoke'];
+    const commands = ['setup','backend','storage','profile','enroll','enroll-status','enroll-cancel','discovery','excluded-tasks','connect','connections','scopes','auth-start','auth-status','auth-continue','auth-wait','auth-cancel','sign-out','start','send','retry','status','retry-remove','read','watch','ack','handoff','close','api-target','api-request','browser-join','feedback','diagnostics','enrollment-revoke'];
     if (!commands.includes(command)) fail('unknown_command');
     const home = resolve(env.POPPYKIT_HOME ?? join(homedir(), '.poppykit'));
     const {State: StateStore}=await import('./state.js');
@@ -132,7 +133,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
     sdk = deps.sdk ?? await import('@poppykit/client');
     transport = cancelable(deps.transport ?? sdk.createNodeTransport(),abort.signal);
     let metadata = sdk.createMetadataResolver(transport);
-    if (command === 'discovery') { need(0); const found = await metadata.resolveCompany(p.domain); return reply({ organization: found.document.organization, issuer: found.authorization?.issuer, authMethods: sdk.signInMethods(found).map(item => item.method), scopes: found.authorization?.scopes_supported ?? [], scopeDescriptions: found.document.auth?.scopes ?? {}, apis: found.document.apis?.map(api => ({ type: api.type, url: api.url, resource: api.resource })), browser: !!found.document.web?.browser_session_endpoint, feedback: !!found.document.feedback }); }
+    if (command === 'discovery') { need(0); const found = await metadata.resolveCompany(p.domain); return reply({ organization: found.document.organization, issuer: found.authorization?.issuer, authMethods: sdk.signInMethods(found).map(item => item.method), scopes: found.authorization?.scopes_supported ?? [], scopeDescriptions: found.document.auth?.scopes ?? {}, scopeHints: found.document.auth?.scope_hints ?? {}, excludedTasks: found.document.excluded_tasks?.url, apis: found.document.apis?.map(api => ({ type: api.type, url: api.url, resource: api.resource })), browser: !!found.document.web?.browser_session_endpoint, feedback: !!found.document.feedback }); }
     const config = state.get<{ module: string }>('config','backend');
     backend = deps.backend ?? await openBackend({ module: config?.module, unlock: v.unlock, directory: join(home, 'encrypted-secrets') });
     if (deps.backend) await backend.healthCheck();
@@ -328,7 +329,8 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       await response.body?.cancel(); return reply({ status: response.status, target });
     }
     if (command === 'browser-join') { need(0); if (!backend.browserController) fail('trusted_browser_controller_required',4); await auth.joinBrowser(connectionId,required('return-to'),backend.browserController); return reply({ joined:true }); }
-    if (command === 'feedback') { need(0); await auth.feedback(connectionId,{kind:'missing',task:required('task'),description:required('description')}); return reply({ accepted:true }); }
+    if (command === 'feedback') { need(0); const alternative = await auth.feedback(connectionId,{kind:'missing',task:required('task'),description:required('description')}); return reply({ accepted:true, ...(alternative ? { alternative } : {}) }); }
+    if (command === 'excluded-tasks') { need(0); return reply({ tasks: await auth.excludedTasks(connectionId) }); }
     const target = await auth.target(connectionId);
     const binding = { profileId:p.id,provider:p.provider,installationId:p.installationId,enrollmentRef:p.credentialRef,connectionId,issuer:target.issuer,endpoint:target.endpoint,resource:target.resource ?? null };
     const bindConversation=(id:string)=>state!.atomic(()=>{const saved=state!.get('conversation',id);if(saved&&JSON.stringify(saved)!==JSON.stringify(binding))fail('conversation_binding_conflict',5);state!.put('conversation',id,binding);});

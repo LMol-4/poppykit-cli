@@ -28,7 +28,7 @@ const cli=join(project,'node_modules/@poppykit/cli/dist/cli.js');
 const {createProvider,createResultCipher}:typeof import('@poppykit/client/provider')=await import(await exported('@poppykit/client','./provider'));
 const {SqliteProviderStore}:typeof import('@poppykit/client/provider/sqlite')=await import(await exported('@poppykit/client','./provider/sqlite'));
 const {createMetadataResolver}:typeof import('@poppykit/client')=await import(await exported('@poppykit/client'));
-const {jwtVerify,importJWK}:typeof import('jose')=await import(await exported('jose'));
+const {compactVerify,decodeProtectedHeader,decodeJwt,calculateJwkThumbprint,importJWK}:typeof import('jose')=await import(await exported('jose'));
 // Copy the independent peer fixture into the consumer so only installed dependencies resolve.
 const peerFile=join(project,'generic-peer.mjs');await writeFile(peerFile,await readFile(new URL('../test-support/generic-peer.mjs',import.meta.url)));
 const {createFakeCompany}:typeof import('../test-support/generic-peer.mjs')=await import(pathToFileURL(peerFile).href);
@@ -58,6 +58,7 @@ for(const company of companies)company.behavior.resourceHandler=async (request,b
   return Response.json(u.pathname.endsWith('/events')?{conversation_id:'conversation1',status:'closed',responder:'agent',events:u.searchParams.get('cursor')?[]:[opaqueEvent],cursor:'event1',has_more:false,credential:{secret:'page extension'},delivery:{secret:'opaque page extension'},outcome:{status:'uncertain'}}:{conversation_id:'conversation1',status:'idle',responder:'agent',sendOperation:'company extension',outcome:{status:'cancelled'}});
 };
 const companyFor=(url:string)=>companies.find(c=>new URL(url).hostname===c.domain||new URL(url).hostname.endsWith('.'+c.domain));
+const browserJoins=new Map<string,{cookie:string;expires:number}>();
 async function companyRequest(request:Request){
   const company=companyFor(request.url);assert.ok(company,'verified company fixture destination');const u=new URL(request.url);
   if(u.pathname==='/.well-known/poppy.json'){
@@ -67,14 +68,22 @@ async function companyRequest(request:Request){
   if(u.pathname.startsWith('/.well-known/oauth-authorization-server')){const body=await(await company.handle(request)).json();body.protected_resources.push(`https://api.${company.domain}`);return Response.json(body);}
   if(u.pathname==='/.well-known/oauth-protected-resource/mcp')return Response.json({resource:`https://api.${company.domain}/mcp`,authorization_servers:[company.issuer],dpop_signing_alg_values_supported:['ES256']});
   if(u.pathname==='/join'){
-    const form=new URLSearchParams(await request.text());const verified=await jwtVerify(expectValue(form.get('assertion')),await importJWK(jwk,'ES256'),{issuer:clientId,audience:`https://${company.domain}/join`,typ:'poppy-browser+jwt'});
-    const claims=verified.payload;assert.ok(typeof claims.session_id==='string'&&typeof claims.return_to==='string');const session=company.sessions.get(claims.session_id);assert.ok(session&&session.sub===claims.sub);assert.ok(claims.return_to.startsWith(`https://${company.domain}/`));return new Response(null,{status:303,headers:{location:claims.return_to}});
+    if(request.method==='GET'){
+      const code=randomBytes(32).toString('base64url'),cookie='__Host-poppy_join='+randomBytes(32).toString('base64url');browserJoins.set(code,{cookie,expires:Date.now()+60000});
+      return new Response('<form method="post"><input type="hidden" name="code" value="'+code+'"><input name="proof"></form>',{headers:{'set-cookie':cookie+'; Path=/; Secure; HttpOnly; SameSite=Strict','cache-control':'no-store'}});
+    }
+    const form=new URLSearchParams(await request.text()),code=expectValue(form.get('code')),binding=browserJoins.get(code);browserJoins.delete(code);
+    assert.ok(binding&&binding.expires>Date.now()&&binding.cookie===request.headers.get('cookie'));
+    const jwt=expectValue(form.get('proof')),header=decodeProtectedHeader(jwt);assert.equal(header.typ,'dpop+jwt');assert.equal(header.alg,'ES256');assert.ok(header.jwk&&!('d' in header.jwk));
+    await compactVerify(jwt,await importJWK(header.jwk,'ES256'));const claims=decodeJwt(jwt);assert.equal(claims.htm,'POST');assert.equal(claims.htu,request.url);assert.equal(claims.nonce,code);assert.equal(claims.ath,undefined);
+    const key=await calculateJwkThumbprint(header.jwk),token=[...company.tokens.values()].find(t=>t.jkt===key);assert.ok(token&&company.sessions.get(token.sessionId));
+    return new Response(null,{status:303,headers:{location:'https://'+company.domain+'/'}});
   }
   if(u.href===company.tokenEndpoint&&request.method==='POST'){const form=new URLSearchParams(await request.clone().text());if(form.get('code')===holdCode){heldResolve();await release;}}
   return company.handle(request);
 }
 const metadata=createMetadataResolver({fetch:companyRequest});
-const provider=createProvider({clientId,callbackUrl,jwksUri:providerOrigin+'/jwks',clientName:'Generic',store,cipher:createResultCipher(randomBytes(32)),metadata,authenticateEnrollment:async req=>req.headers.get('x-operator-auth')==='fixture-only'?{subject:'visitor',allowedCompanies:companies.map(c=>c.domain)}:null,verifySession:async b=>companies.some(c=>c.issuer===b.issuer&&c.sessions.get(b.sessionId)?.sub===b.userId),signer:{kid:'key',publicJwk:async()=>jwk,sign:async input=>new Uint8Array(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},pair.privateKey,new Uint8Array(input)))}});
+const provider=createProvider({clientId,callbackUrl,jwksUri:providerOrigin+'/jwks',clientName:'Generic',store,cipher:createResultCipher(randomBytes(32)),metadata,authenticateEnrollment:async req=>req.headers.get('x-operator-auth')==='fixture-only'?{subject:'visitor',allowedCompanies:companies.map(c=>c.domain)}:null,signer:{kid:'key',publicJwk:async()=>jwk,sign:async input=>new Uint8Array(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},pair.privateKey,new Uint8Array(input)))}});
 let browserApproved=false,enrollmentMode='ready',enrollmentPolls=0;
 const enrollments=new Map<string,{challenge:string;installationId:string;consumed:boolean}>(),privateMaterial:string[]=[];
 async function browserEnrollment(request:Request){

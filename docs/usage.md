@@ -346,3 +346,19 @@ retry, delivery and checkpoint data at cutover while preserving profiles and
 secure configuration. `legacy_message_uncertain` exits 6 without dispatch;
 reconcile it before discarding its handle, and never create a replacement message
 to bypass uncertainty.
+
+### Draft 0.3 integration checkpoint
+
+`feedback --task TASK --description TEXT` returns `{accepted:true}` for empty
+202, or also `alternative` for a validated 200 response. Instructions/references are
+company data, not consent. Unknown reference types and unlisted API references are
+omitted; malformed known references fail. Nothing is executed automatically.
+`excluded-tasks` returns `{tasks:[...]}` using the same reference validation and
+public HTTP metadata cache. `discovery` exposes its URL and conservative scope hints.
+The caller owns the SHOULD-level early task check; the CLI has no task planner.
+
+Trusted browser backends now implement `loadJoinForm`, `postForm` and `navigate`:
+read the code from the exact endpoint in their own isolated browser, outside model
+context; preserve its cookie; submit the SDK's code/proof without redirect replay.
+The provider no longer signs browser assertions. Bearer-only MCP uses Token Exchange;
+DPoP-capable MCP retains normal grants. These candidates remain unreleased pending F.

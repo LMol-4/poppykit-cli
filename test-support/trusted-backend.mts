@@ -24,6 +24,11 @@ export async function open():Promise<SecureBackend>{
     return new Response(envelope.body||null,{status:envelope.status,headers});
   }};
   backend.transport=transport;
-  backend.browserController={kind:'agent-controlled',async postForm(input){const response=await transport.fetch(new Request(input.url,{method:'POST',body:new URLSearchParams(input.fields)}));const location=response.headers.get('location');assert.ok(location);input.validateRedirect(response.status,location);}};
+  let joinCookie='';
+  backend.browserController={kind:'agent-controlled',
+    async loadJoinForm(url){const page=await transport.fetch(new Request(url));assert.equal(page.status,200);joinCookie=(page.headers.get('set-cookie')??'').split(';')[0];const code=/name="code" value="([^"]+)"/.exec(await page.text())?.[1];assert.ok(code);return {code};},
+    async postForm(input){const response=await transport.fetch(new Request(input.url,{method:'POST',headers:{cookie:joinCookie},body:new URLSearchParams(input.fields)}));const location=response.headers.get('location');assert.ok(location);input.validateRedirect(response.status,location);},
+    async navigate(url){assert.equal(new URL(url).protocol,'https:');},
+  };
   return backend;
 }
