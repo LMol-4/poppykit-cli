@@ -274,8 +274,8 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       resume={command:'auth-wait',profile:p.name,operationId:result.outcome.operationId};
       if (result.authorizationUrl) {
         const secretRef = await backend.secrets.stage(JSON.stringify({ browserBinding, authorizationUrl: result.authorizationUrl }));
-        state.put('direct',result.outcome.operationId,{profileId:p.id,connectionId:result.outcome.connection.id,issuer:result.outcome.connection.issuer,sessionId:result.outcome.connection.sessionId,secretRef});
-        await provider.beginDirect({operationId:result.outcome.operationId,issuer:result.outcome.connection.issuer,sessionId:result.outcome.connection.sessionId!,state:new URL(result.authorizationUrl).searchParams.get('state')!});
+        state.put('direct',result.outcome.operationId,{profileId:p.id,connectionId:result.outcome.connection.id,issuer:result.outcome.connection.issuer,sessionId:result.outcome.connection.sessionId,sessionKey:new URL(result.authorizationUrl).searchParams.get('dpop_jkt')!,secretRef});
+        await provider.beginDirect({operationId:result.outcome.operationId,issuer:result.outcome.connection.issuer,sessionKey:new URL(result.authorizationUrl).searchParams.get('dpop_jkt')!,state:new URL(result.authorizationUrl).searchParams.get('state')!});
       }
       if (result.outcome.connection.id !== connectionId) { state.update(p,{connectionId:result.outcome.connection.id}); connectionId=result.outcome.connection.id; connection=result.outcome.connection; }
       if (!waiting || result.outcome.status!=='pending') return reply({ ...publicStart(result), nextAction: result.outcome.status==='pending' ? 'Open the approval link, then use auth-wait OP to wait or auth-continue OP to retrieve once.' : undefined });
@@ -291,7 +291,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       resume={command:'auth-wait',profile:p.name,operationId:pos[0]};
       releaseApproval??=state.claimApproval(`auth:${p.id}:${connectionId}`);
       let direct = state.get<any>('direct',pos[0]);
-      if (direct && (direct.profileId !== p.id || direct.connectionId !== connectionId || direct.issuer !== connection.issuer || direct.sessionId !== connection.sessionId)) fail('operation_binding_conflict',5);
+      if (direct && (direct.profileId !== p.id || direct.connectionId !== connectionId || !direct.sessionKey || direct.issuer !== connection.issuer || direct.sessionId !== connection.sessionId)) fail('operation_binding_conflict',5);
       if (command === 'auth-cancel') { const outcome=await auth.cancelSignIn(pos[0]); if (direct) { await provider.cancel(pos[0]); await cleanupDirect(pos[0]); } return reply(publicOutcome(outcome)); }
       if (op.status !== 'pending') return reply(publicOutcome(op));
       const material=direct?JSON.parse(await backend.secrets.read(direct.secretRef)??fail('secure_store_locked',4)):undefined;
@@ -302,10 +302,10 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
         if (!direct) return auth.continueSignIn(pos[0]);
         if(direct.retrieving)fail('approval_result_uncertain',6);
         if(!direct.resultRef){
-          await provider.beginDirect({operationId:pos[0],issuer:direct.issuer,sessionId:direct.sessionId,state:new URL(material.authorizationUrl).searchParams.get('state')!});
+          await provider.beginDirect({operationId:pos[0],issuer:direct.issuer,sessionKey:direct.sessionKey,state:new URL(material.authorizationUrl).searchParams.get('state')!});
           direct={...direct,retrieving:true};state!.put('direct',pos[0],direct);
           let result;
-          try { result=await provider.takeResult({operationId:pos[0],issuer:direct.issuer,sessionId:direct.sessionId}); }
+          try { result=await provider.takeResult({operationId:pos[0],issuer:direct.issuer,sessionKey:direct.sessionKey}); }
           catch(error){if((error as {code?:string}).code==='rate_limited'){direct={...direct,retrieving:false};state!.put('direct',pos[0],direct);}throw error;}
           if(result.status==='pending'){direct={...direct,retrieving:false};state!.put('direct',pos[0],direct);return current;}
           const resultRef=await backend!.secrets.stage(result.callbackUrl);

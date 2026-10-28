@@ -168,6 +168,21 @@ test('Direct enrollment, callback, restart completion and sign-out redact all cr
   }finally{await f.close();}
 });
 
+test('old saved Direct work retires locally before provider callback retrieval', async () => {
+  const f = await fixture();
+  try {
+    await f.ok(['connect']); const start = await f.ok(['auth-start','--scope','orders:read']), op = start.outcome.operationId;
+    const state = new State(join(f.home,'cli.sqlite')), profile = state.profile(), direct = state.get<any>('direct',op)!;
+    delete direct.sessionKey; state.put('direct',op,direct); state.close();
+    const store = new SqliteAuthStore(join(f.home,`auth-${profile.id}.sqlite`));
+    try { await store.transaction({operationId:op},draft=>{ delete draft.operations[op].signInSessionKey; }); } finally { store.close(); }
+    let takes = 0; const fetch = f.transport.fetch; f.transport.fetch = async request => { if(request.url.endsWith('/takeResult')) takes++; return fetch(request); };
+    const result = await f.run(['auth-continue',op]); assert.equal(result.out.result.status,'failed'); assert.equal(result.out.result.toJSON().error,'restart_required'); assert.equal(takes,0);
+    const reopened = new State(join(f.home,'cli.sqlite')); try { assert.equal(reopened.get('direct',op),undefined); } finally { reopened.close(); }
+    assert.equal(f.secrets.has(direct.secretRef),false);
+  } finally { await f.close(); }
+});
+
 test('initiating direct command returns approval or denial automatically and reuses only sufficient grants',async()=>{
   for(const decision of ['approve','deny']) {
     const f=await fixture();try {
