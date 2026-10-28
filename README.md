@@ -1,9 +1,9 @@
 # PoppyKit CLI
 
-Unreleased draft 0.3 candidate (2026-10-28), pinned to the public source captured that day.
-Client/CLI 0.5.0 and server 0.4.0 are breaking local candidates. Publication,
-deployment and live acceptance remain separate; stop old writers and follow the
-documented storage/reset procedure before compatible writers resume.
+Draft 0.3 migration (2026-10-28), pinned to the public source captured that day.
+Client/CLI 0.5.0 and server 0.4.0 break the earlier protocol contracts. Stop old
+writers and follow the documented storage/reset procedure before compatible
+writers resume. Registry, deployment and live acceptance have separate receipts.
 
 The Node 24.21.0 minimum is an owner-accepted compatibility baseline. Use a current patched Node 24 runtime where available; this minimum does not establish that older runtimes contain later security fixes. Build and release CI read `.node-version`.
 
