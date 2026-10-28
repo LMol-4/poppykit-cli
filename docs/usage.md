@@ -336,3 +336,13 @@ The packaged workflow checks real installed shims and lifecycle on Windows, macO
 and Linux. Its generic HTTP tunnel does not certify production TLS, a native
 keyring, physical terminal, KMS or browser engine. Every new artifact requires
 its own [release verification](../RELEASING.md); old results do not certify new bytes.
+
+## Unreleased draft 0.3 cutover
+
+Outgoing messages use `author.type`; `--human` marks exact human text and otherwise
+the author is `agent`. Retries reuse the SDK's stored request, ID and target.
+This is a breaking change without backward compatibility. Reset old conversation,
+retry, delivery and checkpoint data at cutover while preserving profiles and
+secure configuration. `legacy_message_uncertain` exits 6 without dispatch;
+reconcile it before discarding its handle, and never create a replacement message
+to bypass uncertainty.

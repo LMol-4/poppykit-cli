@@ -265,9 +265,10 @@ test('Device and Mediated sign-in restart through SDK lifecycle and trusted inpu
     const complete=await f.ok(['auth-continue',start.outcome.operationId]);assert.equal(complete.status,'completed');assert.equal(complete.connection.status,'signed_in');assert.ok(!JSON.stringify([start,complete]).includes('PRIVATE_'));
   }finally{await f.close();}}
 });
-test('retry preserves exact message identity and refuses profile, enrollment, issuer and endpoint changes',async()=>{
+test('retry preserves exact human author, message identity and refuses changed bindings',async()=>{
   const f=await fixture();try{
-    await f.ok(['connect']);f.setLoseSend();const failed=await f.run(['start','--text','generic message','--send-operation','saved']);assert.equal(failed.code,1);assert.equal(failed.out.toJSON().sendOperation,'saved');assert.match(JSON.stringify(failed.out),/Delivery is unconfirmed/);
+    await f.ok(['connect']);f.setLoseSend();const failed=await f.run(['start','--human','--text','generic message','--send-operation','saved']);assert.equal(failed.code,1);assert.equal(failed.out.toJSON().sendOperation,'saved');assert.match(JSON.stringify(failed.out),/Delivery is unconfirmed/);
+    assert.deepEqual((f.sent[0] as {message:{author:unknown}}).message.author,{type:'human'});
     await f.ok(['retry','saved']);assert.equal(f.sent.length,2);assert.deepEqual(f.sent[0],f.sent[1]);
     const state=new State(join(f.home,'cli.sqlite')),p=state.profile();state.update(p,{provider:'https://other.example/v1'});state.close();
     const changed=await f.run(['retry','saved']);assert.equal(changed.code,5);assert.equal(f.sent.length,2);
@@ -397,7 +398,7 @@ test('definite enrollment rejection cleans custody; malformed and staging failur
 test('read and watch preserve exact opaque fields; typed failures expose only validated challenge detail',async()=>{
   const f=await fixture();try{
     await f.ok(['connect']);await f.ok(['start','--text','generic']);
-    const data={authorization:{secret:'business authorization',credential:['a',{refresh_token:'business data'}]},cookie:'business cookie',nested:{secretRef:'business reference',dpopKeyRef:'business reference'}},event={id:'opaque1',type:'message',created_at:'2026-10-24T00:00:00Z',message:{id:'message1',sender:'agent',role:'company',data,credential:{secret:'extension data'}},authorization:{secret:'event extension'}};
+    const data={authorization:{secret:'business authorization',credential:['a',{refresh_token:'business data'}]},cookie:'business cookie',nested:{secretRef:'business reference',dpopKeyRef:'business reference'}},event={id:'opaque1',type:'message',created_at:'2026-10-24T00:00:00Z',message:{id:'message1',author: { type: 'agent' },role:'company',data,credential:{secret:'extension data'}},authorization:{secret:'event extension'}};
     const page={conversation_id:'conversation1',status:'closed',responder:'agent',events:[event],cursor:event.id,has_more:false,credential:{secret:'page extension'},delivery:{secret:'opaque page extension'},outcome:{status:'uncertain'}};
     const original=f.transport.fetch;f.transport.fetch=async request=>request.url.includes('/conversations/')?Response.json(page):original(request);
     assert.deepEqual((await f.ok(['read','conversation1'])).toJSON(),page);

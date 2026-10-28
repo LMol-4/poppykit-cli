@@ -28,7 +28,7 @@ Message options for start, send and direct:
   --text <text>       Message text; provide at least one of text, data or context.
   --data <json>       JSON object (maximum nesting depth 64).
   --context <json>    JSON object (maximum nesting depth 64).
-  --human            Mark exact human text; otherwise sender is agent.
+  --human            Mark exact human text; otherwise author.type is agent.
   --message-id <id>   Caller-supplied message ID; otherwise generated.
   --send-operation <handle>  Persisted send identity; otherwise generated.
   --wait <seconds>   Integer 0..30 (also supported by read).

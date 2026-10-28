@@ -25,8 +25,8 @@ Node 24 >=24.21.0 (24.x only). Direct SDK execution; no daemon. Native Windows D
   auth-wait OP                    resume a bounded browser approval wait
   enroll/auth-start wait up to 300s; --wait-timeout SECONDS (1-300)
   --no-open shows the link only; --no-wait preserves the low-level start result
-  start --text TEXT [--send-operation HANDLE]
-  send CONVERSATION --text TEXT [--send-operation HANDLE]
+  start --text TEXT [--human] [--send-operation HANDLE]
+  send CONVERSATION --text TEXT [--human] [--send-operation HANDLE]
   retry HANDLE | status HANDLE | retry-remove HANDLE
   read CONVERSATION [--cursor CURSOR] | watch CONVERSATION [--consumer NAME]
   ack DELIVERY                   acknowledge a delivered consumer batch
@@ -74,7 +74,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
   try {
     if (!runtimeSupported(process.versions.node)) fail('node_24_21_0_required', 1);
     if (argv.length === 0 || argv.length === 1 && ['help','--help'].includes(command)) return { out: HELP, code: 0 };
-    const options = { json: { type: 'boolean' }, profile: { type: 'string' }, unlock: { type: 'boolean' }, 'no-wait': {type:'boolean'}, 'no-open': {type:'boolean'}, 'wait-timeout': {type:'string'}, provider: { type: 'string' }, enrollment: { type: 'string' }, company: { type: 'string' }, module: { type: 'string' }, scope: { type: 'string', multiple: true }, method: { type: 'string' }, connection: { type: 'string' }, text: { type: 'string' }, 'send-operation': { type: 'string' }, cursor: { type: 'string' }, consumer: { type: 'string' }, anonymous: { type: 'boolean' }, api: { type: 'string' }, destination: { type: 'string' }, 'return-to': { type: 'string' }, task: { type: 'string' }, description: { type: 'string' } } as const;
+    const options = { json: { type: 'boolean' }, profile: { type: 'string' }, unlock: { type: 'boolean' }, 'no-wait': {type:'boolean'}, 'no-open': {type:'boolean'}, 'wait-timeout': {type:'string'}, provider: { type: 'string' }, enrollment: { type: 'string' }, company: { type: 'string' }, module: { type: 'string' }, scope: { type: 'string', multiple: true }, method: { type: 'string' }, connection: { type: 'string' }, text: { type: 'string' }, human: { type: 'boolean' }, 'send-operation': { type: 'string' }, cursor: { type: 'string' }, consumer: { type: 'string' }, anonymous: { type: 'boolean' }, api: { type: 'string' }, destination: { type: 'string' }, 'return-to': { type: 'string' }, task: { type: 'string' }, description: { type: 'string' } } as const;
     let parsed; try { parsed = parseArgs({ args: argv.slice(1), options, allowPositionals: true }); } catch { return fail('invalid_arguments'); }
     const v = parsed.values, pos = parsed.positionals, str = (key: keyof typeof options) => v[key] as string | undefined;
     const need = (count: number) => { if (pos.length !== count || pos.some(x => !x || x.includes('\0'))) fail('invalid_arguments'); };
@@ -348,12 +348,13 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       need(command==='start'?0:1);
       const handle = command==='retry'?pos[0]:str('send-operation') ?? randomUUID();
       if (!/^[A-Za-z0-9._-]{1,128}$/.test(handle)) fail('invalid_send_operation');
-      const payload = command==='retry'?undefined:{command,conversationId:command==='send'?pos[0]:null,text:required('text')};
+      const payload = command==='retry'?undefined:{command,conversationId:command==='send'?pos[0]:null,text:required('text'),...(v.human?{human:true}:{})};
       const row = state.prepareRetry(handle,binding,payload);
       retryHandle=handle;
       abort.signal.throwIfAborted();
-      const message = {id:row.messageId,sender:'agent' as const,text:row.payload.text};
-      const result = row.payload.command==='start'?await conversation.start(message,{signal:abort.signal}):await conversation.send(row.payload.conversationId,message,{signal:abort.signal});
+      const message = {id:row.messageId,author:{type:row.payload.human?'human' as const:'agent' as const},text:row.payload.text};
+      const saved = await conversation.operation(row.messageId);
+      const result = saved ? {...await conversation.retry(row.messageId,abort.signal),messageId:row.messageId} : row.payload.command==='start'?await conversation.start(message,{signal:abort.signal}):await conversation.send(row.payload.conversationId,message,{signal:abort.signal});
       bindConversation(result.conversation_id);
       return reply(result,{sendOperation:handle});
     }
@@ -404,10 +405,11 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       native_helper_unavailable: 'Reinstall the published CLI package; its bundled native helper is missing or failed its integrity check. Do not download a helper from company metadata.',
       linux_secret_tool_missing: 'Install your distribution package providing /usr/bin/secret-tool (libsecret-tools on Ubuntu/Debian; libsecret on Fedora/Arch), then retry as your desktop user without sudo.',
       linux_secret_service_unavailable: 'Use your own live desktop session bus and unlock the original default Secret Service keyring, then retry without sudo. Headless/SSH sessions may lack that access. Do not delete the vault or share credentials in chat.',
+      legacy_message_uncertain: 'This message predates the author contract and may already be accepted. Keep its handle and reconcile with the company history/operator before taking another action.',
       company_unavailable: 'The company service is unavailable or paused. Ask its operator to check availability before retrying; enrollment does not need to be repeated.',
     };
-    const nextAction=[hints[code],retryHandle?'Delivery is unconfirmed. Keep this sendOperation and use retry with the same handle when ready; do not create a replacement message.':undefined].filter(Boolean).join(' ');
-    return {out:{version:1,command,status:'error',requestId,...(retryHandle?{sendOperation:retryHandle}:{}),...(resume?{result:{resume}}:{}),error:{...details,...(httpStatus?{httpStatus}:{}),...(nextAction?{nextAction}:{})}},code:abort.signal.aborted?130:known?error.exitCode:code==='consumed'?6:code==='binding_conflict'?5:['trusted_input_required','provider_unavailable','secure_store_locked','secure_store_unavailable'].includes(code)?4:['sign_in_required','insufficient_scope','unauthorized','invalid_grant','provider_unauthorized'].includes(code)?3:1};
+    const nextAction=[hints[code],retryHandle&&code!=='legacy_message_uncertain'?'Delivery is unconfirmed. Keep this sendOperation and use retry with the same handle when ready; do not create a replacement message.':undefined].filter(Boolean).join(' ');
+    return {out:{version:1,command,status:'error',requestId,...(retryHandle?{sendOperation:retryHandle}:{}),...(resume?{result:{resume}}:{}),error:{...details,...(httpStatus?{httpStatus}:{}),...(nextAction?{nextAction}:{})}},code:abort.signal.aborted?130:known?error.exitCode:['consumed','legacy_message_uncertain'].includes(code)?6:code==='binding_conflict'?5:['trusted_input_required','provider_unavailable','secure_store_locked','secure_store_unavailable'].includes(code)?4:['sign_in_required','insufficient_scope','unauthorized','invalid_grant','provider_unauthorized'].includes(code)?3:1};
   } finally { if(approvalTimer)clearTimeout(approvalTimer);process.off('SIGINT',canceled);process.off('SIGTERM',canceled);for(const dispose of [()=>releaseApproval?.(),()=>authStore?.close(),()=>conversationStore?.close(),()=>transport?.close?.(),()=>backend?.close?.(),()=>state?.close()])try{await dispose();}catch{/* Cleanup adapters cannot expose private errors. */} }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {

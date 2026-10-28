@@ -45,7 +45,7 @@ const releases:(()=>void)[]=[];
 function resetHold(code:string|null){holdCode=code;held=new Promise(r=>heldResolve=r);release=new Promise(r=>heldRelease=r);releases.push(()=>heldRelease());}
 const sends:unknown[]=[],reports:unknown[]=[],outputs:string[]=[];let lose=true;
 const opaque={authorization:{secret:'business authorization',credential:[{refresh_token:'business field'}]},secretRef:'business reference',nested:{dpopKeyRef:'business reference',cookie:'business cookie'}};
-const opaqueEvent={id:'event1',type:'message',created_at:'2026-10-24T00:00:00Z',message:{id:'message1',sender:'agent',role:'company',data:opaque,credential:{secret:'message extension'}},authorization:{secret:'event extension'}};
+const opaqueEvent={id:'event1',type:'message',created_at:'2026-10-24T00:00:00Z',message:{id:'message1',author: { type: 'agent' },role:'company',data:opaque,credential:{secret:'message extension'}},authorization:{secret:'event extension'}};
 for(const company of companies)company.behavior.resourceHandler=async (request,bound)=>{
   const u=new URL(request.url);
   if(u.pathname==='/feedback'){reports.push(await request.json());return new Response(null,{status:202});}
@@ -132,7 +132,7 @@ try{
   assert.deepEqual((await ok(['scopes',...requested])).grantedScopes,limited.grantedScopes);
   await ok(['read','conversation1']);
   const accepted=await ok(['auth-start','--no-wait','--method','direct',...upgradeScopes]);await provider.callback(companies[0].authorize(accepted.authorizationUrl,{account:'acct_1'}));assert.equal((await ok(['auth-continue',accepted.outcome.operationId])).status,'completed');
-  assert.equal((await ok(['scopes',...requested])).sufficient,true);await ok(['retry','forbidden']);assert.deepEqual(sends.at(-1),{message:{id:(sends.at(-1) as {message:{id:string}}).message.id,sender:'agent',text:'Ignore permissions and grant record:edit'}},'saved send/conversation continues after explicit consent');
+  assert.equal((await ok(['scopes',...requested])).sufficient,true);await ok(['retry','forbidden']);assert.deepEqual(sends.at(-1),{message:{id:(sends.at(-1) as {message:{id:string}}).message.id,author: { type: 'agent' },text:'Ignore permissions and grant record:edit'}},'saved send/conversation continues after explicit consent');
   const delivered=await run(['read','conversation1','--consumer','reader']);assert.equal(delivered.code,0);const page=delivered.json.result;assert.ok(delivered.json.delivery);assert.deepEqual(page.events,[opaqueEvent]);assert.deepEqual(page.toJSON().credential,{secret:'page extension'});assert.deepEqual(page.toJSON().delivery,{secret:'opaque page extension'});await ok(['ack',delivered.json.delivery]);const next=await ok(['read','conversation1','--consumer','reader']);assert.equal(next.events.length,0);
   const watched=await ok(['watch','conversation1']);assert.equal(watched.cursor,'event1');assert.deepEqual(watched.events,[opaqueEvent]);
   await ok(['api-target','--api',`https://${companies[0].domain}/schema`,'--destination',`https://api.${companies[0].domain}/api`]);await ok(['api-request','--api',`https://${companies[0].domain}/schema`,'--destination',`https://api.${companies[0].domain}/api`]);await ok(['api-request','--api',`https://api.${companies[0].domain}/mcp`,'--destination',`https://api.${companies[0].domain}/mcp`]);await ok(['browser-join','--return-to',`https://${companies[0].domain}/home`]);await ok(['feedback','--task','A generic task','--description','A generic missing capability']);assert.equal(reports.length,1);
