@@ -275,8 +275,8 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       resume={command:'auth-wait',profile:p.name,operationId:result.outcome.operationId};
       if (result.authorizationUrl) {
         const secretRef = await backend.secrets.stage(JSON.stringify({ browserBinding, authorizationUrl: result.authorizationUrl }));
-        state.put('direct',result.outcome.operationId,{profileId:p.id,connectionId:result.outcome.connection.id,issuer:result.outcome.connection.issuer,sessionId:result.outcome.connection.sessionId,sessionKey:new URL(result.authorizationUrl).searchParams.get('dpop_jkt')!,secretRef});
-        await provider.beginDirect({operationId:result.outcome.operationId,issuer:result.outcome.connection.issuer,sessionKey:new URL(result.authorizationUrl).searchParams.get('dpop_jkt')!,state:new URL(result.authorizationUrl).searchParams.get('state')!});
+        state.put('direct',result.outcome.operationId,{profileId:p.id,connectionId:result.outcome.connection.id,issuer:result.outcome.connection.issuer,sessionId:result.outcome.connection.sessionId,sessionKey:new URL(result.authorizationUrl).searchParams.get('dpop_jkt'),secretRef});
+        await provider.beginDirect({operationId:result.outcome.operationId,issuer:result.outcome.connection.issuer,sessionKey:new URL(result.authorizationUrl).searchParams.get('dpop_jkt'),state:new URL(result.authorizationUrl).searchParams.get('state')!});
       }
       if (result.outcome.connection.id !== connectionId) { state.update(p,{connectionId:result.outcome.connection.id}); connectionId=result.outcome.connection.id; connection=result.outcome.connection; }
       if (!waiting || result.outcome.status!=='pending') return reply({ ...publicStart(result), nextAction: result.outcome.status==='pending' ? 'Open the approval link, then use auth-wait OP to wait or auth-continue OP to retrieve once.' : undefined });
@@ -292,7 +292,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       resume={command:'auth-wait',profile:p.name,operationId:pos[0]};
       releaseApproval??=state.claimApproval(`auth:${p.id}:${connectionId}`);
       let direct = state.get<any>('direct',pos[0]);
-      if (direct && (direct.profileId !== p.id || direct.connectionId !== connectionId || !direct.sessionKey || direct.issuer !== connection.issuer || direct.sessionId !== connection.sessionId)) fail('operation_binding_conflict',5);
+      if (direct && (direct.profileId !== p.id || direct.connectionId !== connectionId || (direct.sessionKey !== null && (typeof direct.sessionKey !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(direct.sessionKey))) || direct.issuer !== connection.issuer || (op.status === 'pending' && direct.sessionId !== connection.sessionId))) fail('operation_binding_conflict',5);
       if (command === 'auth-cancel') { const outcome=await auth.cancelSignIn(pos[0]); if (direct) { await provider.cancel(pos[0]); await cleanupDirect(pos[0]); } return reply(publicOutcome(outcome)); }
       if (op.status !== 'pending') return reply(publicOutcome(op));
       const material=direct?JSON.parse(await backend.secrets.read(direct.secretRef)??fail('secure_store_locked',4)):undefined;
@@ -329,7 +329,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       await response.body?.cancel(); return reply({ status: response.status, target });
     }
     if (command === 'browser-join') { need(0); if (!backend.browserController) fail('trusted_browser_controller_required',4); await auth.joinBrowser(connectionId,required('return-to'),backend.browserController); return reply({ joined:true }); }
-    if (command === 'feedback') { need(0); const alternative = await auth.feedback(connectionId,{kind:'missing',task:required('task'),description:required('description')}); return reply({ accepted:true, ...(alternative ? { alternative } : {}) }); }
+    if (command === 'feedback') { need(0); const alternative = await auth.feedback(connectionId,{task:required('task'),description:required('description')}); return reply({ accepted:true, ...(alternative ? { alternative } : {}) }); }
     if (command === 'excluded-tasks') { need(0); return reply({ tasks: await auth.excludedTasks(connectionId) }); }
     const target = await auth.target(connectionId);
     const binding = { profileId:p.id,provider:p.provider,installationId:p.installationId,enrollmentRef:p.credentialRef,connectionId,issuer:target.issuer,endpoint:target.endpoint,resource:target.resource ?? null };
@@ -381,7 +381,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
     }
     const known = error instanceof CliFailure, safe = error as { code?: string; retryAfterMs?: number; status?: number };
     if(!abort.signal.aborted&&safe.code==='renewal_pending'&&retryHandle)return reply({status:'pending',nextAction:'retry_after_live_auth_finishes'},{sendOperation:retryHandle});
-    const authCodes = ['anonymous_unavailable','sign_in_required','insufficient_scope','invalid_scope','unsupported_method','direct_unavailable','device_unavailable','mediated_unavailable','trusted_input_required','provider_unavailable','provider_unauthorized','provider_rate_limited','provider_network_error','provider_invalid_response','provider_assertion_expired','provider_clock_skew','disconnected','invalid_grant','rate_limited','secure_store_locked','secure_store_unavailable','unauthorized','expired','canceled','consumed','binding_conflict'];
+    const authCodes = ['anonymous_unavailable','invalid_session','insufficient_scope','invalid_scope','unsupported_method','direct_unavailable','device_unavailable','mediated_unavailable','trusted_input_required','provider_unavailable','provider_unauthorized','provider_rate_limited','provider_network_error','provider_invalid_response','provider_assertion_expired','provider_clock_skew','disconnected','invalid_grant','rate_limited','secure_store_locked','secure_store_unavailable','unauthorized','expired','canceled','consumed','binding_conflict'];
     const sdkCode = sdk && error instanceof sdk.ConversationError ? error.code : safe.code && authCodes.includes(safe.code) ? safe.code : undefined;
     const httpStatus = safe.code==='http_error' && typeof safe.status==='number' && Number.isInteger(safe.status) && safe.status>=500 && safe.status<=599 ? safe.status : undefined;
     const code = abort.signal.aborted ? 'canceled' : known ? error.code : httpStatus ? 'company_unavailable' : sdkCode ?? 'operation_failed';
@@ -411,7 +411,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       company_unavailable: 'The company service is unavailable or paused. Ask its operator to check availability before retrying; enrollment does not need to be repeated.',
     };
     const nextAction=[hints[code],retryHandle&&code!=='legacy_message_uncertain'?'Delivery is unconfirmed. Keep this sendOperation and use retry with the same handle when ready; do not create a replacement message.':undefined].filter(Boolean).join(' ');
-    return {out:{version:1,command,status:'error',requestId,...(retryHandle?{sendOperation:retryHandle}:{}),...(resume?{result:{resume}}:{}),error:{...details,...(httpStatus?{httpStatus}:{}),...(nextAction?{nextAction}:{})}},code:abort.signal.aborted?130:known?error.exitCode:['consumed','legacy_message_uncertain'].includes(code)?6:code==='binding_conflict'?5:['trusted_input_required','provider_unavailable','secure_store_locked','secure_store_unavailable'].includes(code)?4:['sign_in_required','insufficient_scope','unauthorized','invalid_grant','provider_unauthorized'].includes(code)?3:1};
+    return {out:{version:1,command,status:'error',requestId,...(retryHandle?{sendOperation:retryHandle}:{}),...(resume?{result:{resume}}:{}),error:{...details,...(httpStatus?{httpStatus}:{}),...(nextAction?{nextAction}:{})}},code:abort.signal.aborted?130:known?error.exitCode:['consumed','legacy_message_uncertain'].includes(code)?6:code==='binding_conflict'?5:['trusted_input_required','provider_unavailable','secure_store_locked','secure_store_unavailable'].includes(code)?4:['invalid_session','insufficient_scope','unauthorized','invalid_grant','provider_unauthorized'].includes(code)?3:1};
   } finally { if(approvalTimer)clearTimeout(approvalTimer);process.off('SIGINT',canceled);process.off('SIGTERM',canceled);for(const dispose of [()=>releaseApproval?.(),()=>authStore?.close(),()=>conversationStore?.close(),()=>transport?.close?.(),()=>backend?.close?.(),()=>state?.close()])try{await dispose();}catch{/* Cleanup adapters cannot expose private errors. */} }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {

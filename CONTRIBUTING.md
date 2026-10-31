@@ -2,10 +2,11 @@
 
 Follow the live draft 0.3 [specification](https://personalagentprotocol.org/docs/0.3/spec)
 and [guides](https://personalagentprotocol.org/docs/0.3/guides). Tests/snapshots are
-supporting evidence. Demo/business workflows and individual extensions are excluded.
+supporting evidence. Mediated Sign-In v1 is included; Operations v2 is required in the later migration
+blocks. Application business workflows belong to the host.
 Code is [MIT](LICENSE); confirm rights for third-party contributions.
 
-Use Node 24.12.0, TypeScript 5.9.3 and @types/node 24.10.0.
+Use Node 24.21.0 or later within Node 24, TypeScript 5.9.3 and @types/node 24.10.0.
 Install the exact client candidate tarball plus the pinned dev tools; CI reads full
 SDK SHAs/versions from .github/*-candidate.json. No sibling checkout is required.
 
@@ -23,22 +24,22 @@ tarball. It creates a disposable bus and keyring with a private piped test unloc
 it does not use or modify the runner's desktop keyring. See [Linux](docs/linux.md).
 
 ```sh
-npm run typecheck
-npm run build
-npm run typecheck:tests
-npm test
-npm run check:docs
+pnpm run typecheck
+pnpm run build
+pnpm run typecheck:tests
+pnpm test
+pnpm run check:docs
 ```
 
 First-party tests/workers/verification helpers are canonical `.mts`. The existing
 compiler checks the whole strict program before emitting ignored adjacent `.mjs`.
 Failed builds remove stale outputs; no loader/type stripping substitutes for checking.
-Run `npm run build:tests` before `node scripts/run-checks.mjs GROUP` (unit, contracts,
+Run `pnpm run build:tests` before `node scripts/run-checks.mjs GROUP` (unit, contracts,
 integration, validation). Groups are exhaustive/disjoint. LF source bytes are enforced
 by Git attributes. Generated test code is outside the npm allowlist; production tests
 import built/installed JavaScript. Release/build tools and examples may remain JS.
 
-`npm run coverage` builds production and checked tests, then writes native Node
+`pnpm run coverage` builds production and checked tests, then writes native Node
 line/branch/function reports under `coverage/` (summary.txt, lcov.info, report.json,
 raw/). Metrics cover loaded first-party dist JS: no production source maps or TS
 remapping; node_modules excluded, unloaded modules listed. Raw subprocess reports
