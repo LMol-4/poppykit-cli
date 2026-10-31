@@ -48,7 +48,7 @@ for(const name of packages){
   manifests.push({name:manifest.name,version:manifest.version,dependencies:manifest.dependencies,exports:Object.keys(manifest.exports)});
 }
 assert.deepEqual(manifests[2].dependencies,{'@poppykit/client':pins.client.version});
-assert.deepEqual(manifests[0].dependencies,{jose:'6.2.12'});assert.deepEqual(manifests[1].dependencies,{jose:'6.2.12'});
+assert.deepEqual(manifests[0].dependencies,{jose:'6.2.12','@agentsig/structured-fields':'0.1.1'});assert.deepEqual(manifests[1].dependencies,{jose:'6.2.12','@agentsig/structured-fields':'0.1.1'});
 const jose=JSON.parse(await readFile(join(project,'node_modules/jose/package.json'),'utf8'));assert.equal(jose.version,'6.2.12');
 const fixture=join(project,'contracts.mts');await writeFile(fixture,types);
 const result=spawnSync(process.execPath,[resolve(compiler),'--noEmit','--strict','--module','NodeNext','--moduleResolution','NodeNext','--target','ES2023','--typeRoots',resolve(typeRoots),fixture],{cwd:project,encoding:'utf8',windowsHide:true});
