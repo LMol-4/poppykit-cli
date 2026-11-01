@@ -68,3 +68,7 @@ their actual status and exit 7; uncertain sends exit 6; completed results exit 0
 Typed `operation_*` errors use exits 2/4/5/6 as appropriate. Cancellation exits 130
 and preserves recovery state. `result.retryAt` is an epoch-millisecond number;
 the auth error field `error.retryAt` remains its exact decimal string.
+
+`OperationReview` also includes the immutable `operation` (ID, revision, terms, expiry) and bound `context`. Trusted website adapters must compare them with Company records. `business-backend --module ABSOLUTE_PATH` selects a local module exporting `confirm` and optional `checkTerms`/`reconcile`; it receives no credential store and preserves the configured native/secure backend. It is loaded only for review/reconciliation; loading failures return exit 4.
+
+For conversation actions, the reconciliation input includes `readConversation(cursor?)`. It reads the saved conversation through SDK authentication pinned to the original business authority, without revealing credentials. Inspect an actual durable Company receipt; model text is not a reconciliation result. Other channels do not receive this capability.

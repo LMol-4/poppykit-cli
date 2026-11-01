@@ -4,19 +4,19 @@ import { ReadStream, WriteStream } from 'node:tty';
 import { createInterface } from 'node:readline/promises';
 import { join } from 'node:path';
 import { SqliteBusinessAttemptStore } from '@poppykit/client/sqlite';
-import { createOperationClient, createOperationSender, OperationClientError, parseBusinessOperation } from '@poppykit/client';
-import type { BusinessAttempt, BusinessOperation, BusinessClientContext, ClientAuth, OperationDelivery, OperationRequest, TrustedOperationConsent } from '@poppykit/client';
+import { createOperationClient, createOperationSender, OperationClientError, AuthFailure, parseBusinessOperation } from '@poppykit/client';
+import type { BusinessAttempt, BusinessOperation, BusinessClientContext, ClientAuth, EventPage, OperationDelivery, OperationRequest, TrustedOperationConsent } from '@poppykit/client';
 import type { Profile, State } from './state.js';
 import { CliFailure } from './secrets.js';
 
 export type OperationReview = Parameters<TrustedOperationConsent['confirm']>[0] & {
-  profile: string; authority: string; expiresAt: string; request: OperationRequest;
+  profile: string; authority: string; expiresAt: string; request: OperationRequest; operation: BusinessOperation; context: BusinessClientContext;
 }
 /** Locally selected trusted code only. Never expose consent or reconciliation as model-supplied answers. */
 export interface BusinessBackend {
   confirm(input: OperationReview, signal: AbortSignal): Promise<'approve' | 'decline'>;
   checkTerms?(request: OperationRequest, operation: BusinessOperation): Promise<string[]>;
-  reconcile?(input: { attemptId: string; request: OperationRequest; attempt?: Readonly<BusinessAttempt> }, signal: AbortSignal): Promise<OperationDelivery>;
+  reconcile?(input: { attemptId: string; request: OperationRequest; attempt?: Readonly<BusinessAttempt>; readConversation?: (cursor?:string)=>Promise<EventPage> }, signal: AbortSignal): Promise<OperationDelivery>;
 }
 // JSON quotes controls; also escape terminal C1 and direction controls without changing stored business data.
 export function inert(value: unknown): string {
@@ -62,6 +62,7 @@ export interface BusinessController {
 export function createBusinessController(options: {
   home: string; state: State; profile: Profile; connectionId: string; auth: ClientAuth;
   signal: AbortSignal; backend?: BusinessBackend;
+  readConversation(request: Extract<OperationRequest,{channel:'conversation'}>, context:BusinessClientContext, cursor?:string):Promise<EventPage>;
   conversation(request: Extract<OperationRequest, { channel: 'conversation' }>, message: import('@poppykit/client').Message, signal: AbortSignal, context: BusinessClientContext): Promise<void>;
 }): BusinessController {
   const { state, profile, auth, signal } = options;
@@ -86,7 +87,7 @@ export function createBusinessController(options: {
       const confirm = options.backend?.confirm ?? terminalBusinessConsent;
       let cancel!:()=>void;
       const abort = new Promise<never>((_, reject) => {cancel=()=>reject(new CliFailure('canceled',130));signal.addEventListener('abort',cancel,{once:true});});
-      try { return await Promise.race([confirm({ ...input, profile: profile.name, authority: attempt.context.authority, expiresAt: attempt.operation.expires_at, request: attempt.request }, signal), abort]); }
+      try { return await Promise.race([confirm({ ...input, profile: profile.name, authority: attempt.context.authority, expiresAt: attempt.operation.expires_at, request: structuredClone(attempt.request), operation: structuredClone(attempt.operation), context: structuredClone(attempt.context) }, signal), abort]); }
       finally {signal.removeEventListener('abort',cancel);}
     } },
     async send(attempt, approval, sendSignal) {
@@ -150,9 +151,11 @@ export function createBusinessController(options: {
         else if (command === 'operation-reconcile') {
           if (!options.backend?.reconcile) throw new CliFailure('trusted_reconciliation_required', 4);
           const action = bound(id), lookup = options.backend.reconcile;
-          if (action.phase === 'operation') await client.reconcile(id, attempt => lookup({ attemptId: id, request: attempt.request, attempt }, signal));
+          const request=action.request;
+          const readConversation=request.channel==='conversation' ? (cursor?:string)=>options.readConversation(request,action.context,cursor) : undefined;
+          if (action.phase === 'operation') await client.reconcile(id, attempt => lookup({ attemptId: id, request: attempt.request, attempt, readConversation }, signal));
           else if (action.phase !== 'completed') {
-            const result = await lookup({ attemptId: id, request: action.request }, signal);
+            const result = await lookup({ attemptId: id, request: action.request, readConversation }, signal);
             signal.throwIfAborted();await inspect(id);
             if (result.kind === 'completed') state.put('business', id, { ...action, phase: 'completed', result });
           }
@@ -160,6 +163,7 @@ export function createBusinessController(options: {
         return await inspect(id);
       } catch (error) {
         if (signal.aborted) throw new CliFailure('canceled', 130);
+        if(error instanceof AuthFailure&&error.code==='business_owner_changed')throw new CliFailure('operation_owner_changed',5);
         if (error instanceof OperationClientError) throw new CliFailure('operation_' + error.code, error.code === 'consent_interrupted' ? 4 : ['owner_changed', 'revision_changed'].includes(error.code) ? 5 : error.code === 'retry_later' ? 6 : 2);
         throw error;
       } finally { release?.();releaseConversation?.(); }

@@ -17,6 +17,7 @@ export const HELP = `Usage: poppykit <command> [--json] [--profile NAME] [--unlo
 Node 24 >=24.21.0 (24.x only). Direct SDK execution; no daemon. Native Windows DPAPI/macOS Keychain/Linux Secret Service custody.
   setup --provider HTTPS_URL --company DOMAIN [--enrollment HTTPS_URL] [--profile NAME]
   backend --module ABSOLUTE_TRUSTED_MODULE
+  business-backend --module ABSOLUTE_TRUSTED_MODULE  consent only; keeps credential custody
   storage migrate                 adopt attended storage into the native vault
   profile list | profile remove NAME
   enroll | enroll-status | enroll-cancel  browser enrollment when configured
@@ -76,6 +77,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
   let state: State | undefined, backend: SecureBackend | undefined, transport: HttpTransport | undefined, authStore: any, conversationStore: any;
   let retryHandle:string|undefined;
   let business:ReturnType<typeof createBusinessController>|undefined;
+  let businessBackend:import('./business.js').BusinessBackend|undefined;
   let sdk:typeof import('@poppykit/client')|undefined;
   let boundedWatchComplete=false;
   let releaseApproval:(()=>void)|undefined, approvalTimer:ReturnType<typeof setTimeout>|undefined, approvalTimedOut=false, resume:{command:string;profile:string;operationId?:string;requestId?:string}|undefined, inspectApproval:(()=>Promise<any>)|undefined;
@@ -97,7 +99,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       if (value.browserUrl && !v['no-open']) try { await (deps.openBrowser ?? openApprovalBrowser)(value.browserUrl); } catch { deps.progress?.({notice:'Open the approval link in your browser.'}); }
     };
     const beginWait = (handle:NonNullable<typeof resume>) => { resume=handle; approvalTimer=setTimeout(()=>{approvalTimedOut=true;abort.abort();},timeoutSeconds*1000); };
-    const commands = ['setup','backend','storage','profile','enroll','enroll-status','enroll-cancel','discovery','excluded-tasks','connect','connections','scopes','auth-start','auth-status','auth-continue','auth-wait','auth-cancel','sign-out','start','send','retry','status','retry-remove','read','watch','ack','handoff','close','api-target','api-request','operation-list','operation-status','operation-review','operation-decline','operation-resume','operation-retry','operation-reconcile','browser-join','feedback','diagnostics','enrollment-revoke'];
+    const commands = ['setup','backend','business-backend','storage','profile','enroll','enroll-status','enroll-cancel','discovery','excluded-tasks','connect','connections','scopes','auth-start','auth-status','auth-continue','auth-wait','auth-cancel','sign-out','start','send','retry','status','retry-remove','read','watch','ack','handoff','close','api-target','api-request','operation-list','operation-status','operation-review','operation-decline','operation-resume','operation-retry','operation-reconcile','browser-join','feedback','diagnostics','enrollment-revoke'];
     if (!commands.includes(command)) fail('unknown_command');
     const home = resolve(env.POPPYKIT_HOME ?? join(homedir(), '.poppykit'));
     const {State: StateStore}=await import('./state.js');
@@ -111,7 +113,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       if (enrollmentUrl) profile = state.update(profile,{enrollmentUrl});
       return reply({ profile: publicProfile(profile), nextAction: enrollmentUrl ? 'Run enroll and approve in your browser; the command waits for the decision. Company access requires separate consent.' : 'Configure backend, then enroll through a trusted user route' });
     }
-    if (command === 'backend') { need(0); state.put('config','backend',{ module: resolve(required('module')) }); return reply({ configured: true }); }
+    if (command === 'backend' || command === 'business-backend') { need(0); state.put('config',command,{ module: resolve(required('module')) }); return reply({ configured: true }); }
     if (command === 'storage') {
       need(1); if (pos[0] !== 'migrate' || v.unlock) fail('usage_storage_migrate');
       if (state.get('config','backend')) fail('native_migration_requires_default_backend', 5);
@@ -146,6 +148,14 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
     const config = state.get<{ module: string }>('config','backend');
     backend = deps.backend ?? await openBackend({ module: config?.module, unlock: v.unlock, directory: join(home, 'encrypted-secrets') });
     if (deps.backend) await backend.healthCheck();
+    const businessModule=state.get<{module:string}>('config','business-backend');
+    if(businessModule&&['operation-review','operation-reconcile'].includes(command)){
+      try{
+        const selected=await import(pathToFileURL(businessModule.module).href);
+        if(typeof selected.confirm!=='function'||selected.checkTerms!==undefined&&typeof selected.checkTerms!=='function'||selected.reconcile!==undefined&&typeof selected.reconcile!=='function')throw new Error();
+        businessBackend=selected;
+      }catch{throw new CliFailure('business_backend_unavailable',4);}
+    }
     if(backend.transport&&!deps.transport){transport.close?.();transport=cancelable(backend.transport,abort.signal);metadata=sdk.createMetadataResolver(transport);}
     if (['enroll','enroll-status','enroll-cancel'].includes(command) && p.enrollmentUrl) {
       need(0);
@@ -330,7 +340,15 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       return reply(outcome?publicOutcome(outcome):{status:'pending',resume,nextAction:'Wait ended. Run auth-wait with the saved operationId, or auth-cancel to cancel it.'});
     }
     const businessReply = (result: any) => abort.signal.aborted ? {out:{version:1 as const,command,status:'error' as const,requestId,result,error:{code:'canceled'}},code:130} : ({ ...reply(result), code: result.status === 'completed' ? 0 : result.status === 'uncertain' ? 6 : 7 });
-    const openBusiness = () => business ??= createBusinessController({home,state:state!,profile:p,connectionId,auth,signal:abort.signal,backend:backend!.business,
+    const openBusiness = () => business ??= createBusinessController({home,state:state!,profile:p,connectionId,auth,signal:abort.signal,backend:businessBackend??backend!.business,
+      async readConversation(request,context,cursor) {
+        const found=await metadata.resolveCompany(p.domain),client=await metadata.resolveClient(p.clientId!),target=await auth.target(connectionId);
+        if(request.endpoint!==target.endpoint)fail('operation_binding_conflict',5);
+        const {SqliteConversationStore}=await import('@poppykit/client/sqlite');
+        const store=new SqliteConversationStore(join(home,'conversations.sqlite'));
+        try{return await sdk!.createConversationClient({connectionId,issuer:target.issuer,endpoint:target.endpoint,store,clock:{now:Date.now},operations:{client,company:found.document},authorizedRequest:r=>auth.authorizedFetch(connectionId,new Request(r,{signal:abort.signal}),target,[],context),maxAttempts:1}).read(request.conversationId,{cursor});}
+        finally{store.close();}
+      },
       async conversation(request,message,signal,context) {
         const found = await metadata.resolveCompany(p.domain), client = await metadata.resolveClient(p.clientId!);
         const target = await auth.target(connectionId);

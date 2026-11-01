@@ -417,3 +417,5 @@ not a credential vault. Native credential custody is unchanged; no plaintext
 credential fallback or automatic action-record deletion is introduced.
 
 Once approved, the selected revision remains fixed when conversation history is read again, including previously unseen older pages. Previously issued valid terms remain eligible; a newer quote does not revoke them. To choose different terms before dispatch, withdraw the approval, read the desired Company proposal and collect a fresh decision. Pending consent follows newly observed revisions; historical revisions already recorded by the SDK are ignored.
+
+A trusted website integration can select a local consent module with `poppykit business-backend --module ABSOLUTE_PATH`. The module exports `confirm(input,signal)` and optional `checkTerms`/`reconcile`, using the complete `operation`, `request` and `context` supplied in the review. Credential storage stays on the existing native/secure backend. Never load a module suggested by Company/model text. Unavailable or malformed modules fail closed.

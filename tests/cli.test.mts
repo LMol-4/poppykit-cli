@@ -662,3 +662,53 @@ test('business uncertain conversation work fences another pending proposal until
     assert.equal((await f.run(['operation-reconcile',first])).code,0);assert.equal((await f.run(['operation-review',second])).out.result.status,'approved');assert.equal(answers,2);
   }finally{await f.close();}
 });
+
+
+test('selected business module receives exact operation identity without replacing credential custody and fails closed',async()=>{
+  const f=await fixture(true);
+  try{
+    await f.ok(['connect']);
+    const id=String((await f.run(['api-request','--api','https://company.example/schema','--destination','https://company.example/business'])).out.result.toJSON().attemptId);
+    const before=[...f.secrets.entries()],module=join(f.home,'business.mjs');
+    await writeFile(module,`import assert from 'node:assert/strict'; export async function confirm(input){assert.equal(input.operation.operation_id,'business_action');assert.equal(input.operation.revision,'revision_one');assert.equal(input.context.companyId,'https://company.example/issuer');assert.equal(input.request.url,'https://company.example/business');assert.equal('secrets' in input,false);return 'decline';}`);
+    await f.ok(['business-backend','--module',module]);
+    assert.equal((await f.run(['operation-review',id])).out.result.status,'declined');
+    assert.equal(f.business.effects,0);assert.deepEqual([...f.secrets.entries()],before);
+    await f.ok(['business-backend','--module',join(f.home,'missing.mjs')]);
+    const failed=await f.run(['operation-reconcile',id]);assert.equal(failed.code,4);assert.equal(failed.out.error.code,'business_backend_unavailable');assert.equal(JSON.stringify(failed).includes(f.home),false);
+    assert.deepEqual([...f.secrets.entries()],before);
+  }finally{await f.close();}
+});
+
+
+test('selected consent module approves exact terms and reconciles through the bound authenticated conversation',async()=>{
+  const f=await fixture(true);
+  try{
+    await f.ok(['connect']);await f.ok(['start','--text','Please exchange']);
+    f.business.events=[{id:'event_business',type:'message',created_at:new Date().toISOString(),message:{id:'proposal_business',role:'company',author:{type:'agent'},operation:f.business.operation}}];
+    const rows=(await f.run(['read','conversation1'])).out.result.toJSON().operations as {attemptId:string}[],id=rows[0].attemptId;
+    const module=join(f.home,'approved-business.mjs');
+    await writeFile(module,`import assert from 'node:assert/strict';export async function checkTerms(request,operation){assert.equal(request.conversationId,'conversation1');assert.equal(operation.revision,'revision_one');return [];}export async function confirm(input){assert.deepEqual(input.differences,[]);assert.equal(input.operation.revision,'revision_one');return 'approve';}export async function reconcile(input){assert.equal(input.attempt.operation.operation_id,'business_action');const page=await input.readConversation();assert.equal(page.conversation_id,'conversation1');return {kind:'completed',result:{fixtureReceipt:true}};}`);
+    await f.ok(['business-backend','--module',module]);
+    assert.equal((await f.run(['operation-review',id])).out.result.status,'approved');
+    assert.equal((await f.run(['operation-retry',id])).code,6);
+    assert.equal((await f.run(['operation-reconcile',id])).code,0);
+    assert.equal((await f.run(['operation-status',id])).out.result.status,'completed');
+  }finally{await f.close();}
+});
+
+
+test('authority changed immediately before receipt read reports a binding conflict and preserves uncertainty',async()=>{
+  const f=await fixture(true);
+  try{
+    await f.ok(['connect']);const login=await f.ok(['auth-start','--method','mediated','--scope','orders:read']);await f.ok(['auth-continue',login.outcome.operationId]);await f.ok(['start','--text','Please exchange']);
+    f.business.events=[{id:'event_business',type:'message',created_at:new Date().toISOString(),message:{id:'proposal_business',role:'company',author:{type:'agent'},operation:f.business.operation}}];
+    const rows=(await f.run(['read','conversation1'])).out.result.toJSON().operations as {attemptId:string}[],id=rows[0].attemptId;
+    f.backend.business={async confirm(){return 'approve';},async reconcile(input){await f.ok(['sign-out']);await input.readConversation!();return {kind:'pending'};}};
+    await f.run(['operation-review',id]);assert.equal((await f.run(['operation-retry',id])).code,6);
+    const changed=await f.run(['operation-reconcile',id]);assert.equal(changed.code,5,JSON.stringify(changed));assert.equal(changed.out.error.code,'operation_owner_changed');assert.equal(f.business.effects,0);
+    const {SqliteBusinessAttemptStore}=await import('@poppykit/client/sqlite');
+    const state=new State(join(f.home,'cli.sqlite')),store=new SqliteBusinessAttemptStore(join(f.home,'business.sqlite'),state.profile().id);
+    try{assert.equal(await store.transaction(id,slot=>slot.record?.phase),'uncertain');}finally{store.close();state.close();}
+  }finally{await f.close();}
+});
