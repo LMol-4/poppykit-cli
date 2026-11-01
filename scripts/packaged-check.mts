@@ -71,6 +71,7 @@ async function companyRequest(request:Request){
     const body=await(await company.handle(new Request(`https://${company.domain}/.well-known/poppy.json`))).json();
     body.organization.domain=u.hostname;body.extensions={...body.extensions,operations:{version:'2'}};body.apis=[{type:'openapi',url:`https://${company.domain}/schema`,description:'Generic API'},{type:'mcp',url:`https://api.${company.domain}/mcp`,description:'Generic MCP'}];body.web={browser_session_endpoint:`https://${company.domain}/join`};body.feedback={endpoint:`https://api.${company.domain}/feedback`};return Response.json(body);
   }
+  if(u.pathname==='/.well-known/oauth-protected-resource')return Response.json({resource:u.origin,authorization_servers:[company.issuer]});
   if(u.pathname.startsWith('/.well-known/oauth-authorization-server')){const body=await(await company.handle(request)).json();body.protected_resources.push(`https://api.${company.domain}`);return Response.json(body);}
   if(u.pathname==='/.well-known/oauth-protected-resource/mcp')return Response.json({resource:`https://api.${company.domain}/mcp`,authorization_servers:[company.issuer],dpop_signing_alg_values_supported:['ES256']});
   if(u.pathname==='/join'){

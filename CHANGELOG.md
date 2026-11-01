@@ -6,7 +6,7 @@ Use the migrated client 0.6.0 with independent delegated Sessions/OAuth, issuerl
 
 ## 0.5.0 — 2026-10-28
 
-Use client 0.5.0 and the pinned draft 0.3 contract. Bind Direct sign-in custody to the Session Key, emit author messages and expose feedback alternatives/excluded tasks. Restart incompatible pending sign-ins; preserve uncertain retries until reconciliation/reset.
+Historical snapshot of draft 0.3, superseded by the current migration. Used client 0.5.0. Bind Direct sign-in custody to the Session Key, emit author messages and expose feedback alternatives/excluded tasks. Restart incompatible pending sign-ins; preserve uncertain retries until reconciliation/reset.
 
 Local migration candidate only. Publication and deployment require separate approval.
 

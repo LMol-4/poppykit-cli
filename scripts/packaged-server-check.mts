@@ -1,11 +1,13 @@
 // Narrow fixture contracts for dynamic installed exports. The separate installed
 // declaration graph check compiles the real candidate declarations, without a CLI server dependency.
-interface Database {sessions(namespace:string):unknown;issuer(namespace:string):unknown;conversations(namespace:string):unknown;close():void;}
+interface Database {businessOperations(namespace:string):unknown;withTransaction<T>(action:(connection:{run(sql:string,params:unknown[]):unknown})=>Promise<T>):Promise<T>;sessions(namespace:string):unknown;issuer(namespace:string):unknown;conversations(namespace:string):unknown;close():void;}
 interface Issuer {token(request:Request):Promise<Response>;authority:{policy:unknown};beginAuthorization(request:Request,binding:string):Promise<{id:string}>;completeAuthorization(id:string,binding:string,decision:{accountId?:string;scopes?:string[];denied?:boolean}):Promise<URL>;disconnect(clientId:string,accountId:string):Promise<void>;}
 interface Authenticator {authenticate(request:Request):Promise<unknown>;}
 interface Service {handle(request:Request):Promise<Response>;claim():Promise<unknown>;requireAccount(work:unknown,scopes:string[]):Promise<unknown>;reply(work:unknown,key:string,message:{id:string;author:{type:string};text:string}):Promise<unknown>;finish(work:unknown,status:string):Promise<unknown>;}
 interface Sessions {policy:unknown}
-interface InstalledServer {createSessionAuthority(options:{companyId:string;metadata:unknown;store:unknown;coordinator:Database;accountPolicy:unknown;now():number}):Sessions;createRequestAuthenticator(options:{sessions:Sessions;authority:Issuer['authority'];endpoints:{origin:string;pathPrefix:string;resource:string}[];now():number}):Authenticator;createConversationService(options:{endpoint:string;store:unknown;authenticator:Authenticator;policy:unknown;clock:{now():number};historyScopes:string[];supportedScopes:string[]}):Service;}
+interface BusinessInput {operationId:string;principal:unknown;scopes:string[];request:{channel:'api';method:string;url:string;body:null};approval?:{operation_id:string;revision:string};proposal():{summary:string;expires_at:string}}
+interface BusinessService {propose(input:BusinessInput):Promise<{kind:string;operation?:{operation_id:string;revision:string}}>;local(input:BusinessInput,effect:()=>Promise<{done:boolean}>):Promise<{kind:string;replay?:boolean;result?:unknown}>}
+interface InstalledServer {createBusinessOperations(options:{companyId:string;metadata:unknown;policy:unknown;store:unknown}):BusinessService;createSessionAuthority(options:{companyId:string;metadata:unknown;store:unknown;coordinator:Database;accountPolicy:unknown;now():number}):Sessions;createRequestAuthenticator(options:{sessions:Sessions;authority:Issuer['authority'];endpoints:{origin:string;pathPrefix:string;resource:string}[];now():number}):Authenticator;createConversationService(options:{endpoint:string;store:unknown;authenticator:Authenticator;policy:unknown;clock:{now():number};historyScopes:string[];supportedScopes:string[]}):Service;}
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile,rm} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
@@ -23,7 +25,7 @@ const {independentAgent}:typeof import('../test-support/independent-agent.mjs')=
 const {SqliteCompanyDatabase}:{SqliteCompanyDatabase:new(path:string)=>Database}=await installed('./sqlite');
 const {createReferenceIssuer}:{createReferenceIssuer:(options:{issuer:string;tokenEndpoint:string;revocationEndpoint:string;protectedResources:string[];supportedScopes:string[];resources:string[];metadata:unknown;store:unknown;coordinator:Database;now():number;requireDpopNonce:boolean;authorizationResultCipher:{seal(value:string):string;open(value:string):string}})=>Issuer}=await installed('./reference-auth');
 const {createResultCipher}:typeof import('@poppykit/client/provider')=await installed('./provider','client');
-const {createRequestAuthenticator,createConversationService,createSessionAuthority}:InstalledServer=await installed('.');
+const {createRequestAuthenticator,createConversationService,createSessionAuthority,createBusinessOperations}:InstalledServer=await installed('.');
 const directory=await mkdtemp(join(tmpdir(),'installed-server ü ')),db=new SqliteCompanyDatabase(join(directory,'company.sqlite'));
 try{
   const peer=await independentAgent(),issuer='https://neutral.example/issuer',endpoint='https://neutral.example/conversations',scopes=['orders:read','record:view','record:edit'];
@@ -43,6 +45,15 @@ try{
   const events=await service.handle(await peer.request(endpoint+'/'+accepted.conversation_id+'/events',signed.access_token));assert.equal(events.status,200);assert.ok((await events.json()).events.some((event:{message?:{id?:string}})=>event.message?.id==='installed_reply'));
   const other=await(await peer.token(issuer,auth.token,{grant_type:'refresh_token',refresh_token:signed.refresh_token,resource:'https://neutral.example/other'},session)).json();await assert.rejects(authenticator.authenticate(await peer.request(endpoint,other.access_token)),{code:'invalid_token'});
   const outsider=await peer.session(issuer,'person-b');assert.equal((await service.handle(await peer.request(endpoint+'/'+accepted.conversation_id+'/events',outsider))).status,404);
+  const clientMetadata=peer.metadata.resolveClient;peer.metadata.resolveClient=async id=>({...await clientMetadata(id),extensions:{operations:{version:'2'}}});
+  const operations=createBusinessOperations({companyId:issuer,metadata:peer.metadata,policy:sessions.policy,store:db.businessOperations(issuer)}),principal=await authenticator.authenticate(await peer.request(endpoint,signed.access_token));
+  const input:BusinessInput={operationId:'installed_business_action',principal,scopes:['record:view'],request:{channel:'api',method:'POST',url:endpoint,body:null},proposal:()=>({summary:'Installed synthetic business action',expires_at:new Date(Date.now()+900000).toISOString()})};
+  const required=await operations.propose(input);assert.equal(required.kind,'approval_required');assert.ok(required.operation);
+  const approval={operation_id:required.operation.operation_id,revision:required.operation.revision};
+  assert.equal((await operations.local({...input,request:{...input.request,method:'DELETE'},approval},async()=>{throw Error('unapproved mutation');})).kind,'approval_required');
+  let effects=0;const effect=async()=>{effects++;await db.withTransaction(async tx=>{await tx.run('INSERT INTO records(ns,kind,id,body) VALUES (?,?,?,?)',[issuer,'installed_effect','action','{}']);});return {done:true};};
+  assert.equal((await operations.local({...input,approval},effect)).kind,'completed');assert.equal((await operations.local({...input,approval},effect)).replay,true);assert.equal(effects,1);
   await auth.disconnect(peer.clientId,'account-a');assert.equal((await service.handle(await peer.request(endpoint+'/'+accepted.conversation_id+'/events',signed.access_token))).status,401);
-  console.log(JSON.stringify({status:'passed',platform:process.platform,node:process.version,checks:['installed-server-SQLite','independent-JWT-DPoP-PKCE','issuer-audience','partial-scopes','conversation-receipts-output','scope-hook-text-denial','resource-user-isolation','immediate-revocation']}));
+  await assert.rejects(operations.local({...input,approval},effect),{code:'invalid_token'});
+  console.log(JSON.stringify({status:'passed',platform:process.platform,node:process.version,checks:['installed-server-SQLite','independent-JWT-DPoP-PKCE','issuer-audience','partial-scopes','conversation-receipts-output','scope-hook-text-denial','resource-user-isolation','immediate-revocation','installed-Operations-revision-binding-atomic-effect-replay-revocation']}));
 }finally{db.close();await rm(directory,{recursive:true,force:true});await rm(peerPath,{force:true});}
