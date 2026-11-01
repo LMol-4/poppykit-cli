@@ -78,21 +78,23 @@ test('initiating enrollment waits, tolerates rate limiting, preserves cancellati
     assert.equal((await main(['enroll','--no-open'],env,{backend,transport})).code,0);assert.equal(starts,1);
   }finally{await rm(home,{recursive:true,force:true});}
 });
-async function fixture(){
+async function fixture(operations=false){
   const home=await mkdtemp(join(tmpdir(),'poppy ü spaces ')),secrets=new Map<string,string>(),store=new SqliteProviderStore(join(home,'provider.sqlite'));
   const backend:SecureBackend={secrets:{async stage(v){const id=randomUUID();secrets.set(id,v);return id;},async read(id){return secrets.get(id)??null;},async remove(id){secrets.delete(id);}},async healthCheck(){},async enrollmentAuth(){return {'x-human':'yes'};},trustedInput:{async collect(req):Promise<Record<string,string>>{return req.challenge?{code:'PRIVATE_OTP'}:{password:'PRIVATE_PASSWORD'};}}};
+  const business={operation:{operation_id:'business_action',revision:'revision_one',summary:'Exchange for $70. <img src=x> \u001b[2J',terms:{amount:'70.00',password:'business-data',access_token:{opaque:true}},expires_at:new Date(Date.now()+600000).toISOString()},requests:[] as {body:string;approval:string|null}[],effects:0,mode:'normal',events:[] as unknown[]};
   const doc:Awaited<ReturnType<MetadataResolver['resolveCompany']>>['document']={protocol_version:'0.3',organization:{name:'Generic',domain:'company.example'},auth:{issuer,scopes:{'orders:read':'Read orders'}},extensions:{'mediated-sign-in':{version:'1',fields:[{name:'password',label:'Password',secret:true}],scopes:['orders:read']}},agent:{protocols:[{type:'poppy',endpoint:'https://company.example/conversations'}]}};
+  if(operations){doc.extensions={...doc.extensions,operations:{version:'2'}};doc.apis=[{type:'openapi',url:'https://company.example/schema',description:'Business API'}];}
   const authorization={issuer,token_endpoint:'https://company.example/token',revocation_endpoint:'https://company.example/revoke',protected_resources:['https://company.example'],grant_types_supported:['https://personalagentprotocol.org/grant/mediated-sign-in','refresh_token','authorization_code','urn:ietf:params:oauth:grant-type:device_code'],scopes_supported:['orders:read'],authorization_endpoint:'https://company.example/authorize',device_authorization_endpoint:'https://company.example/device'};
   const key=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);
   const metadata:MetadataResolver={resolveClient:async()=>{throw new Error('unexpected client lookup');},resolveJwks:async()=>{throw new Error('unexpected JWKS lookup');},resolveCompany:async()=>({url:'https://company.example/.well-known/poppy.json',document:doc,authorization})};
-  const provider=createProvider({clientId,callbackUrl,jwksUri:'https://identity.example/jwks',clientName:'Generic',store,cipher:createResultCipher(randomBytes(32)),metadata,signer:{kid:'key',publicJwk:()=>publicEcJwk(key.publicKey),sign:async bytes=>new Uint8Array(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},key.privateKey,new Uint8Array(bytes)))},authenticateEnrollment:async request=>request.headers.get('x-human')==='yes'?{subject:'human',allowedCompanies:['company.example']}:null});
+  const provider=createProvider({clientId,callbackUrl,jwksUri:'https://identity.example/jwks',clientName:'Generic',store,cipher:createResultCipher(randomBytes(32)),metadata,operations:operations?{ready:async()=>true}:undefined,signer:{kid:'key',publicJwk:()=>publicEcJwk(key.publicKey),sign:async bytes=>new Uint8Array(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},key.privateKey,new Uint8Array(bytes)))},authenticateEnrollment:async request=>request.headers.get('x-human')==='yes'?{subject:'human',allowedCompanies:['company.example']}:null});
   const sent:unknown[]=[];let loseSend=false,unavailable=false,mediated=0;
   const token=(signedIn:boolean,session='session1')=>({access_token:signedIn?'PRIVATE_ACCESS':'PRIVATE_SESSION',token_type:'Bearer',expires_in:300,scope:signedIn?'orders:read':'',...(signedIn?{refresh_token:'PRIVATE_ACCOUNT'}:{})});
-  const transport:HttpTransport={async fetch(request){const u=new URL(request.url);if(u.hostname==='identity.example')return provider.handle(request);if(u.pathname==='/.well-known/poppy.json')return Response.json(doc);if(u.pathname==='/.well-known/oauth-authorization-server/issuer')return Response.json(authorization);if(u.pathname==='/.well-known/oauth-protected-resource')return Response.json({resource:'https://company.example',authorization_servers:[issuer]});if(u.pathname.startsWith('/.well-known/oauth-protected-resource/'))return new Response(null,{status:404});if(u.pathname==='/token'){const form=new URLSearchParams(await request.text());assert.ok(['authorization_code','refresh_token','urn:ietf:params:oauth:grant-type:device_code','https://personalagentprotocol.org/grant/mediated-sign-in'].includes(form.get('grant_type')??''));assert.equal(form.has('assertion'),false);assert.equal(form.has('session_id'),false);if(form.get('grant_type')==='https://personalagentprotocol.org/grant/mediated-sign-in'){mediated++;if(!form.has('sign_in_id')){assert.equal(form.get('password'),'PRIVATE_PASSWORD');return Response.json({error:'code_required',sign_in_id:'challenge1',sent_to:'email',expires_in:600},{status:400});}assert.equal(form.get('one_time_code'),'PRIVATE_OTP');assert.equal(form.has('password'),false);}return Response.json(token(true));}if(u.pathname==='/device')return Response.json({device_code:'PRIVATE_DEVICE',user_code:'USER-CODE',verification_uri:'https://company.example/verify',expires_in:600,interval:1});if(u.pathname.startsWith('/mediated')){mediated++;const body=await request.json();if(mediated===1){assert.equal(body.credentials.password,'PRIVATE_PASSWORD');return Response.json({status:'code_required',sign_in_id:'challenge1',code:{sent_to:'email'},expires_at:new Date(Date.now()+600000).toISOString()});}assert.equal(body.code,'PRIVATE_OTP');return Response.json({status:'complete',...token(true)});}if(u.pathname==='/revoke')return new Response(null,{status:200});if(u.pathname.startsWith('/conversations')){if(request.method==='POST'){sent.push(await request.json());if(unavailable)return Response.json({error:'PRIVATE_REMOTE_BODY'},{status:503});if(loseSend){loseSend=false;throw new Error('PRIVATE_FAILURE');}return Response.json({conversation_id:'conversation1',status:'idle',responder:'agent'});}return Response.json({conversation_id:'conversation1',status:'idle',responder:'agent',events:[],cursor:null,has_more:false});}throw new Error('unexpected fixture destination '+request.url);}};
+  const transport:HttpTransport={async fetch(request){const u=new URL(request.url);if(u.hostname==='identity.example')return provider.handle(request);if(u.pathname==='/.well-known/poppy.json')return Response.json(doc);if(u.pathname==='/.well-known/oauth-authorization-server/issuer')return Response.json(authorization);if(u.pathname==='/.well-known/oauth-protected-resource')return Response.json({resource:'https://company.example',authorization_servers:[issuer]});if(u.pathname.startsWith('/.well-known/oauth-protected-resource/'))return new Response(null,{status:404});if(u.pathname==='/schema')return Response.json({openapi:'3.1.0',servers:[{url:'https://company.example'}]});if(u.pathname==='/business'){const body=await request.text(),approval=request.headers.get('poppy-approval');business.requests.push({body,approval});if(!approval)return Response.json({error:'approval_required',operation:business.operation},{status:403});assert.equal(approval,'operation_id="business_action", revision="revision_one"');assert.equal(request.headers.has('idempotency-key'),false);if(business.mode==='reproposal')return Response.json({error:'approval_required',operation:{...business.operation,revision:'revision_two'}},{status:403});if(business.mode==='pending')return new Response(null,{status:202,headers:{'retry-after':'1'}});if(!business.effects)business.effects++;if(business.mode==='lost'){business.mode='normal';throw new Error('PRIVATE_REMOTE_DIAGNOSTIC');}return Response.json({password:'opaque-business-result',access_token:{amount:70}});}if(u.pathname==='/token'){const form=new URLSearchParams(await request.text());assert.ok(['authorization_code','refresh_token','urn:ietf:params:oauth:grant-type:device_code','https://personalagentprotocol.org/grant/mediated-sign-in'].includes(form.get('grant_type')??''));assert.equal(form.has('assertion'),false);assert.equal(form.has('session_id'),false);if(form.get('grant_type')==='https://personalagentprotocol.org/grant/mediated-sign-in'){mediated++;if(!form.has('sign_in_id')){assert.equal(form.get('password'),'PRIVATE_PASSWORD');return Response.json({error:'code_required',sign_in_id:'challenge1',sent_to:'email',expires_in:600},{status:400});}assert.equal(form.get('one_time_code'),'PRIVATE_OTP');assert.equal(form.has('password'),false);}return Response.json(token(true));}if(u.pathname==='/device')return Response.json({device_code:'PRIVATE_DEVICE',user_code:'USER-CODE',verification_uri:'https://company.example/verify',expires_in:600,interval:1});if(u.pathname.startsWith('/mediated')){mediated++;const body=await request.json();if(mediated===1){assert.equal(body.credentials.password,'PRIVATE_PASSWORD');return Response.json({status:'code_required',sign_in_id:'challenge1',code:{sent_to:'email'},expires_at:new Date(Date.now()+600000).toISOString()});}assert.equal(body.code,'PRIVATE_OTP');return Response.json({status:'complete',...token(true)});}if(u.pathname==='/revoke')return new Response(null,{status:200});if(u.pathname.startsWith('/conversations')){if(request.method==='POST'){sent.push(await request.json());if(unavailable)return Response.json({error:'PRIVATE_REMOTE_BODY'},{status:503});if(loseSend){loseSend=false;throw new Error('PRIVATE_FAILURE');}return Response.json({conversation_id:'conversation1',status:'idle',responder:'agent'});}return Response.json({conversation_id:'conversation1',status:'idle',responder:'agent',events:business.events,cursor:business.events.length?'event_business':null,has_more:false});}throw new Error('unexpected fixture destination '+request.url);}};
   const run=async (args:string[])=>{const r=await main([...args,'--no-wait','--json'],{POPPYKIT_HOME:home},{backend,transport});return {...r,out:reply(r.out)};};
   const ok=async (args:string[])=>{const result=await run(args);assert.equal(result.code,0,JSON.stringify(result.out));assert.equal(typeof result.out,'object');return result.out.result;};
   await ok(['setup','--provider','https://identity.example/v1','--company','company.example']);await ok(['enroll']);
-  return {home,backend,provider,transport,run,ok,sent,secrets,setLoseSend:()=>loseSend=true,setUnavailable:(value:boolean)=>unavailable=value,close:async()=>{store.close();await rm(home,{recursive:true,force:true});}};
+  return {home,backend,provider,transport,run,ok,sent,secrets,business,setLoseSend:()=>loseSend=true,setUnavailable:(value:boolean)=>unavailable=value,close:async()=>{store.close();await rm(home,{recursive:true,force:true});}};
 }
 test('offline startup, runtime floor, stable JSON and no secure backend fallback',async()=>{
   const minimum=(await readFile(new URL('../.node-version',import.meta.url),'utf8')).trim();
@@ -503,4 +505,123 @@ test('Bearer Direct custody is explicitly nullable and a completed sid receipt c
 
 test('current invalid_session failures retain the CLI authorization exit code',async()=>{
   const f=await fixture();try{f.backend.healthCheck=async()=>{throw new AuthFailure('invalid_session');};const result=await f.run(['connections']);assert.equal(result.code,3);assert.equal(result.out.error.code,'invalid_session');}finally{await f.close();}
+});
+
+
+test('business API approval is separate, exact, durable and opaque; completed replay does not dispatch again',async()=>{
+  const f=await fixture(true);try{
+    await f.ok(['connect']);const body=' {"password":"opaque", "access_token":{"amount":70}}\n',file=join(f.home,'request.json');await writeFile(file,body);
+    const args=['api-request','--api','https://company.example/schema','--destination','https://company.example/business?original=1','--method','POST','--body-file',file];
+    const first=await f.run(args),required=first.out.result.toJSON(),id=String(required.attemptId);
+    assert.equal(first.code,7);assert.equal(required.status,'operation_required');assert.equal(f.business.effects,0);assert.deepEqual(required.operation,f.business.operation);
+    assert.equal((await f.run(['operation-retry',id])).code,2);assert.equal(f.business.requests.length,1);
+    assert.equal((await f.run([...args,'--approve'])).code,2);
+    const repeated=await f.run(args);assert.equal(repeated.out.result.toJSON().attemptId,id);assert.equal(f.business.requests.length,1);
+    let reviews=0;f.backend.business={async confirm(input){reviews++;assert.equal(input.companyId,issuer);assert.equal(input.profile,'default');assert.deepEqual(input.terms,f.business.operation.terms);assert.equal(input.summary,f.business.operation.summary);assert.equal(input.request.channel,'api');assert.ok(input.differences.length);return 'approve';}};
+    const approved=await f.run(['operation-review',id]);assert.equal(approved.out.result.status,'approved');assert.equal(approved.code,7);assert.equal(f.business.effects,0);
+    const complete=await f.run(['operation-retry',id]);assert.equal(complete.code,0);assert.equal(complete.out.result.status,'completed');assert.equal(f.business.effects,1);assert.equal(reviews,1);assert.equal(f.business.requests[1].body,body);
+    const result=complete.out.result.toJSON().result as {body:string};assert.deepEqual(JSON.parse(Buffer.from(result.body,'base64').toString()),{password:'opaque-business-result',access_token:{amount:70}});
+    assert.equal((await f.run(args)).out.result.status,'completed');assert.equal(f.business.requests.length,2);
+  }finally{await f.close();}
+});
+
+test('business interrupted consent is fenced, resume needs a fresh answer, decline never sends',async()=>{
+  const f=await fixture(true);try{
+    await f.ok(['connect']);const initial=await f.run(['api-request','--api','https://company.example/schema','--destination','https://company.example/business']);const id=String(initial.out.result.toJSON().attemptId);
+    f.backend.business={async confirm(){throw new Error('PRIVATE_UI_FAILURE');}};
+    const interrupted=await f.run(['operation-review',id]);assert.equal(interrupted.code,4);assert.ok(!JSON.stringify(interrupted).includes('PRIVATE_UI_FAILURE'));
+    assert.equal((await f.run(['operation-status',id])).out.result.status,'consenting');assert.equal((await f.run(['operation-retry',id])).code,2);
+    assert.equal((await f.run(['operation-resume',id])).out.result.status,'operation_required');
+    f.backend.business={async confirm(){return 'decline';}};
+    assert.equal((await f.run(['operation-review',id])).out.result.status,'declined');assert.equal((await f.run(['operation-retry',id])).code,2);assert.equal(f.business.effects,0);
+  }finally{await f.close();}
+});
+
+test('business uncertain effects retain exact approval, honor retry delay and reconcile through trusted code only',async()=>{
+  const f=await fixture(true);try{
+    await f.ok(['connect']);const args=['api-request','--api','https://company.example/schema','--destination','https://company.example/business'];
+    const id=String((await f.run(args)).out.result.toJSON().attemptId);f.backend.business={async confirm(){return 'approve';}};
+    await f.run(['operation-review',id]);f.business.mode='pending';const pending=await f.run(['operation-retry',id]);assert.equal(pending.code,6);assert.equal(pending.out.result.status,'uncertain');assert.ok(Number(pending.out.result.toJSON().retryAt)>Date.now());
+    assert.equal((await f.run(['operation-retry',id])).code,6);assert.equal(f.business.requests.length,2);
+    assert.equal((await f.run(['operation-reconcile',id])).code,4);
+    await new Promise(r=>setTimeout(r,1050));f.business.mode='lost';const lost=await f.run(['operation-retry',id]);assert.equal(lost.code,6);assert.equal(f.business.effects,1);assert.ok(!JSON.stringify(lost).includes('PRIVATE_REMOTE_DIAGNOSTIC'));
+    f.business.mode='reproposal';assert.equal((await f.run(['operation-retry',id])).out.result.status,'uncertain');assert.equal((await f.run(args)).out.result.toJSON().attemptId,id);assert.equal((await f.run(['operation-status',id])).out.result.toJSON().operation && f.business.operation.revision,'revision_one');
+    f.backend.business.reconcile=async input=>{assert.equal(input.attempt?.operation.revision,'revision_one');return {kind:'completed',result:{receipt:'real-synthetic-outcome'}};};
+    const result=await f.run(['operation-reconcile',id]);assert.equal(result.code,0);assert.equal(result.out.result.status,'completed');assert.equal(f.business.effects,1);
+  }finally{await f.close();}
+});
+
+test('business consent checks live account and profile, cancellation preserves interrupted work and rejects concurrent review',async()=>{
+  const f=await fixture(true);try{
+    await f.ok(['connect']);const signIn=await f.ok(['auth-start','--method','mediated','--scope','orders:read']);await f.ok(['auth-continue',signIn.outcome.operationId]);const id=String((await f.run(['api-request','--api','https://company.example/schema','--destination','https://company.example/business'])).out.result.toJSON().attemptId);
+    let entered!:()=>void;const ready=new Promise<void>(r=>entered=r);f.backend.business={async confirm(_input,signal){entered();return new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(new Error('PRIVATE_CANCELED')),{once:true}));}};
+    const review=f.run(['operation-review',id]);await ready;assert.equal((await f.run(['operation-review',id])).code,5);process.emit('SIGINT');assert.equal((await review).code,130);
+    assert.equal((await f.run(['operation-status',id])).out.result.status,'consenting');await f.run(['operation-resume',id]);
+    f.backend.business={async confirm(){await f.ok(['sign-out']);return 'approve';}};
+    const changed=await f.run(['operation-review',id]);assert.equal(changed.code,5);assert.equal(f.business.effects,0);
+  }finally{await f.close();}
+});
+
+test('business conversation operation-only content is recorded and approval-only send remains uncertain',async()=>{
+  const f=await fixture(true);try{
+    await f.ok(['connect']);await f.ok(['start','--text','Please exchange']);
+    f.business.events=[{id:'event_business',type:'message',created_at:new Date().toISOString(),message:{id:'proposal_business',role:'company',author:{type:'agent'},operation:f.business.operation}}];
+    const read=await f.run(['read','conversation1']),operations=read.out.result.toJSON().operations as {attemptId:string;status:string}[];assert.equal(operations[0].status,'operation_required');const id=operations[0].attemptId;
+    f.backend.business={async confirm(){return 'approve';}};await f.run(['operation-review',id]);const result=await f.run(['operation-retry',id]);assert.equal(result.code,6);const sent=f.sent.at(-1) as {message:{approval:unknown;text?:string}};assert.deepEqual(sent.message.approval,{operation_id:'business_action',revision:'revision_one'});assert.equal(sent.message.text,undefined);
+  }finally{await f.close();}
+});
+
+
+test('business expiry and withdrawal refuse dispatch; a changed profile cannot reuse consent',async()=>{
+  for(const mode of ['expired','withdrawn','profile']){
+    const f=await fixture(true);try{
+      await f.ok(['connect']);if(mode==='expired')f.business.operation.expires_at=new Date(Date.now()-1000).toISOString();
+      const id=String((await f.run(['api-request','--api','https://company.example/schema','--destination','https://company.example/business'])).out.result.toJSON().attemptId);
+      if(mode==='expired')assert.equal((await f.run(['operation-status',id])).out.result.status,'expired');
+      else if(mode==='withdrawn')assert.equal((await f.run(['operation-decline',id])).out.result.status,'withdrawn');
+      else{f.backend.business={async confirm(){const state=new State(join(f.home,'cli.sqlite'));try{state.update(state.profile(),{credentialRef:'changed-enrollment'});}finally{state.close();}return 'approve';}};assert.notEqual((await f.run(['operation-review',id])).code,0);}
+      assert.notEqual((await f.run(['operation-retry',id])).code,0);assert.equal(f.business.effects,0);assert.equal(f.business.requests.length,1);
+    }finally{await f.close();}
+  }
+});
+
+test('business conversation revisions replace unsent consent and a declined action does not hide the next proposal',async()=>{
+  const f=await fixture(true);try{
+    await f.ok(['connect']);await f.ok(['start','--text','Please exchange']);
+    const event=(operation:typeof f.business.operation)=>({id:'event_business',type:'message',created_at:new Date().toISOString(),message:{id:'proposal_business',role:'company',author:{type:'agent'},operation}});
+    f.business.events=[event(f.business.operation)];
+    const first=(await f.run(['read','conversation1'])).out.result.toJSON().operations as {attemptId:string}[],id=first[0].attemptId;
+    f.backend.business={async confirm(){return 'approve';}};await f.run(['operation-review',id]);
+    const revised={...f.business.operation,revision:'revision_two',summary:'Exchange costs $90',terms:{...f.business.operation.terms,amount:'90.00'}};
+    f.business.events=[event(f.business.operation),event(revised)];await f.run(['read','conversation1']);
+    assert.equal((await f.run(['operation-status',id])).out.result.status,'operation_required');
+    f.backend.business={async confirm(input){assert.equal(input.summary,revised.summary);assert.deepEqual(input.terms,revised.terms);return 'approve';}};
+    assert.equal((await f.run(['operation-review',id])).out.result.status,'approved');
+    await f.run(['read','conversation1']);assert.equal((await f.run(['operation-status',id])).out.result.status,'approved','replayed full history must preserve the exact approval');
+    f.business.events=[event(f.business.operation)];await f.run(['read','conversation1']);assert.equal((await f.run(['operation-status',id])).out.result.status,'approved','an older page must not replace the selected revision');
+    assert.equal((await f.run(['operation-decline',id])).out.result.status,'withdrawn');
+    f.business.events=[event({...f.business.operation,operation_id:'second_action'})];
+    const next=(await f.run(['read','conversation1'])).out.result.toJSON().operations as {attemptId:string}[];assert.notEqual(next[0].attemptId,id);
+  }finally{await f.close();}
+});
+
+test('business API approved dispatch refuses an authority switch while target discovery is held',async()=>{
+  const f=await fixture(true);try{
+    await f.ok(['connect']);const signIn=await f.ok(['auth-start','--method','mediated','--scope','orders:read']);await f.ok(['auth-continue',signIn.outcome.operationId]);
+    const id=String((await f.run(['api-request','--api','https://company.example/schema','--destination','https://company.example/business'])).out.result.toJSON().attemptId);
+    f.backend.business={async confirm(){return 'approve';}};await f.run(['operation-review',id]);
+    let entered!:()=>void,release!:()=>void;const ready=new Promise<void>(r=>entered=r),gate=new Promise<void>(r=>release=r),fetch=f.transport.fetch;
+    f.transport.fetch=async request=>{if(new URL(request.url).pathname==='/.well-known/oauth-protected-resource/business'){entered();await gate;}return fetch(request);};
+    const sending=f.run(['operation-retry',id]);await ready;await f.ok(['sign-out']);release();
+    assert.notEqual((await sending).code,0);assert.equal(f.business.requests.length,1);assert.equal(f.business.effects,0);
+  }finally{await f.close();}
+});
+
+test('business terminal quotes controls and refuses detached stdin approval',async()=>{
+  const {inert}=await import('../dist/business.js');
+  const data={summary:'\u001b[2J\u009b31m\u202E <img src=x>',password:{amount:70}};
+  const rendered=inert(data);assert.ok(!/[\u001b\u009b\u202E]/.test(rendered));assert.deepEqual(JSON.parse(rendered),data);
+  const file=new URL('../dist/business.js',import.meta.url).href;
+  const script=`import {terminalBusinessConsent} from ${JSON.stringify(file)};try{await terminalBusinessConsent({attemptId:'synthetic',companyId:'https://example.com',companyName:'Company',summary:'Synthetic',differences:[],profile:'test',authority:'session:synthetic',expiresAt:'2099-01-01T00:00:00Z',request:{channel:'api',method:'POST',url:'https://example.com/action',body:null}},new AbortController().signal);process.exitCode=1;}catch(error){if(error.code!=='trusted_terminal_required')throw error;console.log(error.code);}`;
+  const child=spawn(process.execPath,['--input-type=module','-e',script],{detached:true,stdio:['pipe','pipe','pipe'],windowsHide:true});let out='',err='';child.stdout.on('data',b=>out+=b);child.stderr.on('data',b=>err+=b);child.stdin.end('approve\n');const [code]=await once(child,'close');assert.equal(code,0,err);assert.equal(out.trim(),'trusted_terminal_required');
 });

@@ -316,6 +316,7 @@ See [typed errors and scope upgrades](../API.md) for machine-readable recovery.
 | 4 | Secure storage or trusted user/browser input unavailable |
 | 5 | Immutable destination/state binding conflict |
 | 6 | Uncertain exchange/result delivery; inspect before further action |
+| 7 | Business operation requires a decision or has not completed |
 | 130 | User cancellation |
 
 `diagnostics` is available without credentials and reports Node/platform, state
@@ -326,7 +327,7 @@ A public setup prompt contains only these four fields (use an actual published
 or locally supplied candidate version):
 
 ```text
-Package: @poppykit/cli@0.5.0 (verify publication before registry install)
+Package: @poppykit/cli@0.6.0 (verify publication before registry install)
 Provider: https://identity.example/v1
 Company: company.example
 Task: Ask about the available services.
@@ -341,9 +342,7 @@ its own [release verification](../RELEASING.md); old results do not certify new 
 
 Outgoing messages use `author.type`; `--human` marks exact human text and otherwise
 the author is `agent`. Retries reuse the SDK's stored request, ID and target.
-This is a breaking change without backward compatibility. Reset old conversation,
-retry, delivery and checkpoint data at cutover while preserving profiles and
-secure configuration. `legacy_message_uncertain` exits 6 without dispatch;
+This is a breaking change without backward compatibility. Stop old writers before cutover. Preserve existing conversations, uncertain retries, delivery/checkpoint data, profiles and credentials. Reconcile incompatible records before explicit retirement. `legacy_message_uncertain` exits 6 without dispatch;
 reconcile it before discarding its handle, and never create a replacement message
 to bypass uncertainty.
 
@@ -359,6 +358,60 @@ The caller owns the SHOULD-level early task check; the CLI has no task planner.
 
 Trusted browser backends now implement `loadJoinForm`, `postForm` and `navigate`:
 read the code from the exact endpoint in their own isolated browser, outside model
-context; preserve its cookie; submit the SDK's code/proof without redirect replay.
-The provider no longer signs browser assertions. Bearer-only MCP uses Token Exchange;
-DPoP-capable MCP retains normal grants. These candidates remain unreleased pending F.
+context; preserve its cookie; the SDK separately authorizes the code, then the controller submits code only without redirect replay. The provider no longer signs browser assertions. MCP uses the resource's discovered OAuth metadata and its Bearer/DPoP policy; signed-out requests use delegated Sessions without token issuance.
+
+## Business operations
+
+Enrollment and OAuth sign-in authorize account access. They never approve a
+purchase, cancellation, exchange or other business action. Operations v2 support
+must be advertised by BOTH verified Company and provider/client documents. The
+provider operator opts in only after configuring the complete trusted CLI route.
+The CLI supports API and conversation operations; it has no MCP tool execution
+command (MCP API target/read probes remain available).
+
+```sh
+poppykit api-request --api https://company.example/schema \
+  --destination https://company.example/exchange --method POST --body-file request.json --json
+# Save result.attemptId; operation_required exits 7 and has performed no business effect.
+poppykit operation-status HANDLE --json
+poppykit operation-review HANDLE
+# Review never sends. Only an actual answer through the trusted UI can approve.
+poppykit operation-retry HANDLE --json
+```
+
+The trusted console displays the exact Company identifier/name, summary, optional
+structured terms, original request, expiry, local profile and authority. It quotes
+terminal/control characters and renders no Company HTML/images. Compare quantity,
+cost and all conditions yourself: arbitrary business semantics cannot be inferred
+by a generic CLI. A trusted backend may add application-specific discrepancies.
+The user must type the fresh displayed confirmation phrase or decline. No
+unattended approve flag exists. The console reads `/dev/tty` (Windows console),
+not model-visible stdin. A headless caller needs a locally selected trusted
+`SecureBackend.business` adapter that collects the actual user's answer; returning
+a model's claimed approval violates this contract. Keep consent outside tools.
+
+`operation-list` recovers saved actions without sending. `operation-resume HANDLE`
+dismisses an interrupted consent session; `operation-review` then needs a fresh
+answer. `operation-decline` withdraws an unsent approval. After possible dispatch,
+it preserves uncertainty and suppresses retry; it cannot undo the Company effect.
+Ctrl+C preserves the handle and pending/uncertain state. A changed Company, User,
+Session/account or enrollment fails closed; select the original authority before
+recovery. Separate OAuth grants conservatively represent distinct accounts.
+
+`operation-retry` sends only the stored exact revision/request and retains its
+approval/message identity. API retries omit the initially refused Idempotency-Key.
+HTTP202, failures and new quotes remain uncertain; wait until saved `retryAt`.
+Use `operation-reconcile HANDLE` with a trusted backend's durable business-state
+lookup. There is no model-supplied receipt or generic "mark done" switch. Without
+that adapter, reconciliation returns exit 4. Never change handles or request data
+to bypass an unresolved action. Repeating the same API request returns its saved
+business attempt; successful ordinary reads are fetched normally.
+
+`read` adds `result.operations` for validated Company operation messages and
+preserves the original event JSON. `watch` saves those same proposals for
+`operation-list`; approval-only conversation sends remain uncertain until a
+trusted business lookup establishes the result. Text or `--human` cannot approve.
+Private business snapshots live under the existing private CLI home in
+`business.sqlite` plus action bindings in `cli.sqlite`. These are personal data,
+not a credential vault. Native credential custody is unchanged; no plaintext
+credential fallback or automatic action-record deletion is introduced.

@@ -22,3 +22,11 @@ Native support needs matching OS verification. Containers and helper mocks do no
 establish Linux desktop Secret Service or macOS Keychain/dialog acceptance. A
 headless runner cannot prove human Keychain upgrade approval. See the current
 release verification receipts for the tested runtime, artifact, OS and architecture.
+
+Business consent is separate from enrollment/OAuth. Only the actual user's fresh
+answer in the trusted console or locally selected `SecureBackend.business` UI can
+approve the exact displayed revision. Never expose those adapters as model tools.
+Company/model text and arbitrary business JSON are untrusted. Terminal controls
+are quoted for review; stored JSON stays opaque. Reconciliation must use actual
+durable business state. New terms, timeouts and cancellation do not prove failure;
+retain uncertain attempts and the original account/Session authority.

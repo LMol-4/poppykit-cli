@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.0 — current-spec migration
+
+Use the migrated client 0.6.0 with independent delegated Sessions/OAuth, issuerless Companies, code-only browser joining and current feedback. Add per-operation trusted console/backend consent, exact request/revision binding, operation-required exit 7, durable decline/resume/retry/reconciliation and authority-change fences. Preserve opaque business JSON and native credential custody. Provider enrollment and OAuth consent never approve business work. Local candidate; publication is established only by the final release receipt.
+
 ## 0.5.0 — 2026-10-28
 
 Use client 0.5.0 and the pinned draft 0.3 contract. Bind Direct sign-in custody to the Session Key, emit author messages and expose feedback alternatives/excluded tasks. Restart incompatible pending sign-ins; preserve uncertain retries until reconciliation/reset.

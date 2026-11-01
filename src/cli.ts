@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { realpathSync } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -11,6 +11,7 @@ import { CliFailure, openBackend, hiddenInput } from './secrets.js';
 import type { SecureBackend } from './secrets.js';
 import type { ClientAuth, HttpTransport, Connection, AuthOutcome, SignInStart } from '@poppykit/client';
 import { openApprovalBrowser, waitForApproval } from './approval.js';
+import { createBusinessController } from './business.js';
 
 export const HELP = `Usage: poppykit <command> [--json] [--profile NAME] [--unlock]
 Node 24 >=24.21.0 (24.x only). Direct SDK execution; no daemon. Native Windows DPAPI/macOS Keychain/Linux Secret Service custody.
@@ -33,7 +34,12 @@ Node 24 >=24.21.0 (24.x only). Direct SDK execution; no daemon. Native Windows D
   ack DELIVERY                   acknowledge a delivered consumer batch
   handoff CONVERSATION | close CONVERSATION
   api-target --api DISCOVERED_URL [--destination VERIFIED_URL]
-  api-request --api DISCOVERED_URL --destination VERIFIED_URL [--method GET]
+  api-request --api DISCOVERED_URL --destination VERIFIED_URL [--method GET] [--body-file FILE]
+  operation-list | operation-status HANDLE
+  operation-review HANDLE         trusted per-operation consent; never sends
+  operation-decline HANDLE | operation-resume HANDLE
+  operation-retry HANDLE | operation-reconcile HANDLE
+  Business consent is separate from enrollment/sign-in. Uncertain actions retain their handles.
   browser-join --return-to HTTPS_URL | feedback --task TASK --description TEXT
   diagnostics | enrollment-revoke
 Windows uses current-user DPAPI, macOS uses Keychain and Linux uses Secret Service by default.
@@ -41,11 +47,13 @@ Linux requires secret-tool (libsecret-tools on Ubuntu/Debian) and an unlocked de
 Other unattended use requires a configured secure backend. --unlock explicitly uses
 attended encrypted storage with a hidden terminal passphrase each invocation.
 Exit: 0 complete/pending, 1 runtime/remote, 2 usage, 3 authorization, 4 secure
-backend/trusted input unavailable, 5 binding conflict, 6 uncertain, 130 canceled.
+backend/trusted input unavailable, 5 binding conflict, 6 uncertain, 7 business approval/decision required, 130 canceled.
 `;
 type Reply = { version: 1; command: string; status: 'ok' | 'error'; result?: unknown; sendOperation?: string; delivery?: string; error?: { code: string; nextAction?: string; httpStatus?: number; requiredScopes?: string[]; retryAfterMs?: number; retryAt?: string; conversationId?: string; extensions?: string[] }; requestId: string };
 interface Dependencies { sdk?: typeof import('@poppykit/client'); transport?: HttpTransport; backend?: SecureBackend; openBrowser?:(url:string)=>Promise<void>; progress?:(value:unknown)=>void }
 function fail(code: string, exitCode = 2): never { throw new CliFailure(code, exitCode); }
+const positionalHandle = (argv:string[]) => /^[A-Za-z0-9_]+$/.test(argv[1]??'')?argv[1]:undefined;
+const companyOperation = (event: import('@poppykit/client').ConversationEvent) => { const message=event.message;return event.type==='message'&&message&&typeof message==='object'&&'role' in message&&message.role==='company'&&'operation' in message&&message.operation?message:undefined; };
 const publicConnection = ({id,domain,issuer,organization,sessionId,generation,status,scopes}:Connection):Connection => ({id,domain,issuer,organization:{name:organization.name,domain:organization.domain},sessionId,generation,status,scopes});
 const publicOutcome = ({operationId,status,connection,error,grantedScopes,missingScopes,retryAfterMs,nextAction}:AuthOutcome):AuthOutcome => ({operationId,status,connection:publicConnection(connection),error,grantedScopes,missingScopes,retryAfterMs,nextAction});
 const publicStart = ({outcome,authorizationUrl,device}:SignInStart):SignInStart => ({outcome:publicOutcome(outcome),authorizationUrl,...(device?{device:{verificationUri:device.verificationUri,verificationUriComplete:device.verificationUriComplete,userCode:device.userCode,organization:{name:device.organization.name,domain:device.organization.domain},nextPollAt:device.nextPollAt}}:{})});
@@ -67,6 +75,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
   const reply = (result: any, metadata:Pick<Reply,'delivery'|'sendOperation'>={}) => {if(abort.signal.aborted&&!boundedWatchComplete)throw new CliFailure('canceled',130); const status = ['connect','enroll','enroll-status','auth-start','auth-status','auth-continue','auth-wait','auth-cancel'].includes(command) ? result?.outcome?.status ?? result?.status : undefined; return { out: { version: 1 as const, command, status: 'ok' as const, result, ...metadata, requestId }, code: status === 'uncertain' ? 6 : ['denied','expired','failed'].includes(status) ? 3 : status === 'cancelled' ? 130 : 0 }; };
   let state: State | undefined, backend: SecureBackend | undefined, transport: HttpTransport | undefined, authStore: any, conversationStore: any;
   let retryHandle:string|undefined;
+  let business:ReturnType<typeof createBusinessController>|undefined;
   let sdk:typeof import('@poppykit/client')|undefined;
   let boundedWatchComplete=false;
   let releaseApproval:(()=>void)|undefined, approvalTimer:ReturnType<typeof setTimeout>|undefined, approvalTimedOut=false, resume:{command:string;profile:string;operationId?:string;requestId?:string}|undefined, inspectApproval:(()=>Promise<any>)|undefined;
@@ -75,7 +84,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
   try {
     if (!runtimeSupported(process.versions.node)) fail('node_24_21_0_required', 1);
     if (argv.length === 0 || argv.length === 1 && ['help','--help'].includes(command)) return { out: HELP, code: 0 };
-    const options = { json: { type: 'boolean' }, profile: { type: 'string' }, unlock: { type: 'boolean' }, 'no-wait': {type:'boolean'}, 'no-open': {type:'boolean'}, 'wait-timeout': {type:'string'}, provider: { type: 'string' }, enrollment: { type: 'string' }, company: { type: 'string' }, module: { type: 'string' }, scope: { type: 'string', multiple: true }, method: { type: 'string' }, connection: { type: 'string' }, text: { type: 'string' }, human: { type: 'boolean' }, 'send-operation': { type: 'string' }, cursor: { type: 'string' }, consumer: { type: 'string' }, anonymous: { type: 'boolean' }, api: { type: 'string' }, destination: { type: 'string' }, 'return-to': { type: 'string' }, task: { type: 'string' }, description: { type: 'string' } } as const;
+    const options = { json: { type: 'boolean' }, profile: { type: 'string' }, unlock: { type: 'boolean' }, 'no-wait': {type:'boolean'}, 'no-open': {type:'boolean'}, 'wait-timeout': {type:'string'}, provider: { type: 'string' }, enrollment: { type: 'string' }, company: { type: 'string' }, module: { type: 'string' }, scope: { type: 'string', multiple: true }, method: { type: 'string' }, connection: { type: 'string' }, 'body-file': { type: 'string' }, text: { type: 'string' }, human: { type: 'boolean' }, 'send-operation': { type: 'string' }, cursor: { type: 'string' }, consumer: { type: 'string' }, anonymous: { type: 'boolean' }, api: { type: 'string' }, destination: { type: 'string' }, 'return-to': { type: 'string' }, task: { type: 'string' }, description: { type: 'string' } } as const;
     let parsed; try { parsed = parseArgs({ args: argv.slice(1), options, allowPositionals: true }); } catch { return fail('invalid_arguments'); }
     const v = parsed.values, pos = parsed.positionals, str = (key: keyof typeof options) => v[key] as string | undefined;
     const need = (count: number) => { if (pos.length !== count || pos.some(x => !x || x.includes('\0'))) fail('invalid_arguments'); };
@@ -88,7 +97,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       if (value.browserUrl && !v['no-open']) try { await (deps.openBrowser ?? openApprovalBrowser)(value.browserUrl); } catch { deps.progress?.({notice:'Open the approval link in your browser.'}); }
     };
     const beginWait = (handle:NonNullable<typeof resume>) => { resume=handle; approvalTimer=setTimeout(()=>{approvalTimedOut=true;abort.abort();},timeoutSeconds*1000); };
-    const commands = ['setup','backend','storage','profile','enroll','enroll-status','enroll-cancel','discovery','excluded-tasks','connect','connections','scopes','auth-start','auth-status','auth-continue','auth-wait','auth-cancel','sign-out','start','send','retry','status','retry-remove','read','watch','ack','handoff','close','api-target','api-request','browser-join','feedback','diagnostics','enrollment-revoke'];
+    const commands = ['setup','backend','storage','profile','enroll','enroll-status','enroll-cancel','discovery','excluded-tasks','connect','connections','scopes','auth-start','auth-status','auth-continue','auth-wait','auth-cancel','sign-out','start','send','retry','status','retry-remove','read','watch','ack','handoff','close','api-target','api-request','operation-list','operation-status','operation-review','operation-decline','operation-resume','operation-retry','operation-reconcile','browser-join','feedback','diagnostics','enrollment-revoke'];
     if (!commands.includes(command)) fail('unknown_command');
     const home = resolve(env.POPPYKIT_HOME ?? join(homedir(), '.poppykit'));
     const {State: StateStore}=await import('./state.js');
@@ -320,13 +329,35 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       const outcome=waiting?await waitForApproval(poll,{signal:abort.signal,pending:value=>value.status==='pending',timeoutMs:timeoutSeconds*1000}):await poll();
       return reply(outcome?publicOutcome(outcome):{status:'pending',resume,nextAction:'Wait ended. Run auth-wait with the saved operationId, or auth-cancel to cancel it.'});
     }
+    const businessReply = (result: any) => abort.signal.aborted ? {out:{version:1 as const,command,status:'error' as const,requestId,result,error:{code:'canceled'}},code:130} : ({ ...reply(result), code: result.status === 'completed' ? 0 : result.status === 'uncertain' ? 6 : 7 });
+    const openBusiness = () => business ??= createBusinessController({home,state:state!,profile:p,connectionId,auth,signal:abort.signal,backend:backend!.business,
+      async conversation(request,message,signal,context) {
+        const found = await metadata.resolveCompany(p.domain), client = await metadata.resolveClient(p.clientId!);
+        const target = await auth.target(connectionId);
+        if (request.endpoint !== target.endpoint) fail('operation_binding_conflict',5);
+        const {SqliteConversationStore}=await import('@poppykit/client/sqlite');
+        const store=new SqliteConversationStore(join(home,'conversations.sqlite'));
+        try {
+          const peer=sdk!.createConversationClient({connectionId,issuer:target.issuer,endpoint:target.endpoint,store,clock:{now:Date.now},operations:{client,company:found.document},authorizedRequest:r=>auth.authorizedFetch(connectionId,r,target,[],context),maxAttempts:1});
+          const saved=await peer.operation(message.id);
+          if(saved)await peer.retry(message.id,signal);else await peer.send(request.conversationId,message,{signal});
+        } finally {store.close();}
+      }
+    });
+    if(command.startsWith('operation-')) {
+      if(command==='operation-list'){need(0);return reply({attempts:await openBusiness().recover()});}
+      need(1);return businessReply(command==='operation-status'?await openBusiness().inspect(pos[0]):await openBusiness().command(command,pos[0]));
+    }
     if (command === 'api-target' || command === 'api-request') {
       need(0); const target = await auth.apiTarget(connectionId, required('api'), str('destination'));
       if (command === 'api-target') return reply(target);
-      const destination = required('destination'), method = str('method') ?? 'GET';
-      if (!['GET','HEAD'].includes(method)) fail('api_request_read_methods_only');
-      const response = await auth.apiFetch(connectionId,new Request(destination,{method,signal:abort.signal}),target,v.scope ?? []);
-      await response.body?.cancel(); return reply({ status: response.status, target });
+      const destination = required('destination'), method = (str('method') ?? 'GET').toUpperCase();
+      if (!['GET','HEAD','POST','PUT','PATCH','DELETE'].includes(method)) fail('invalid_api_method');
+      if (target.kind==='mcp' && !['GET','HEAD'].includes(method)) fail('mcp_tool_transport_unavailable',4);
+      const bytes = str('body-file') ? await readFile(required('body-file')) : undefined;
+      if(bytes && ['GET','HEAD'].includes(method))fail('api_body_not_allowed');
+      const request = new Request(destination,{method,signal:abort.signal,...(bytes?{body:bytes,headers:{'content-type':'application/json'}}:{})});
+      return businessReply(await openBusiness().api(request,required('api'),v.scope??[]));
     }
     if (command === 'browser-join') { need(0); if (!backend.browserController) fail('trusted_browser_controller_required',4); await auth.joinBrowser(connectionId,required('return-to'),backend.browserController); return reply({ joined:true }); }
     if (command === 'feedback') { need(0); const alternative = await auth.feedback(connectionId,{task:required('task'),description:required('description')}); return reply({ accepted:true, ...(alternative ? { alternative } : {}) }); }
@@ -336,7 +367,8 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
     const bindConversation=(id:string)=>state!.atomic(()=>{const saved=state!.get('conversation',id);if(saved&&JSON.stringify(saved)!==JSON.stringify(binding))fail('conversation_binding_conflict',5);state!.put('conversation',id,binding);});
     if(['send','read','watch','handoff','close'].includes(command)) {const saved=state.get('conversation',pos[0]);if(!saved||JSON.stringify(saved)!==JSON.stringify(binding))fail('conversation_binding_conflict',5);}
     conversationStore = new SqliteConversationStore(join(home, 'conversations.sqlite'));
-    const conversation = sdk.createConversationClient({ connectionId,issuer:target.issuer,endpoint:target.endpoint,store:conversationStore,clock:{now:Date.now},authorization:(id,scopes)=>auth.authorization(id,scopes),authorizedRequest:request=>auth.authorizedFetch(connectionId,request,target),maxAttempts:1 });
+    const found = await metadata.resolveCompany(p.domain), clientMetadata = await metadata.resolveClient(p.clientId);
+    const conversation = sdk.createConversationClient({ operations:{client:clientMetadata,company:found.document}, connectionId,issuer:target.issuer,endpoint:target.endpoint,store:conversationStore,clock:{now:Date.now},authorization:(id,scopes)=>auth.authorization(id,scopes),authorizedRequest:request=>auth.authorizedFetch(connectionId,request,target),maxAttempts:1 });
     const consumer=str('consumer'),key={connectionId,issuer:target.issuer,endpoint:target.endpoint};
     if(consumer&&str('cursor'))fail('consumer_and_cursor_are_exclusive');
     if(consumer&&!/^[A-Za-z0-9_-]{1,128}$/.test(consumer))fail('invalid_consumer');
@@ -360,10 +392,12 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       bindConversation(result.conversation_id);
       return reply(result,{sendOperation:handle});
     }
-    if (command === 'read') { need(1);const page=await conversation.read(pos[0],{cursor:previous,signal:abort.signal});return reply(page,{delivery:delivery(page.cursor)}); }
+    if (command === 'read') { need(1);const page=await conversation.read(pos[0],{cursor:previous,signal:abort.signal});
+      const operations=[];for(const event of page.events)if(companyOperation(event))operations.push(await openBusiness().conversation({channel:'conversation',endpoint:target.endpoint,conversationId:pos[0]},event.message));
+      return reply({...page,...(operations.length?{operations}:{})},{delivery:delivery(page.cursor)}); }
     if (command === 'watch') {
       need(1); const events:unknown[]=[];let cursor=previous,timedOut=false;const timer=setTimeout(()=>{timedOut=true;boundedWatchComplete=true;abort.abort();},30000);
-      try { for await(const item of conversation.watch(pos[0],{cursor,signal:abort.signal,maxReconnects:0})) { events.push(item.event);cursor=item.event.id;if(events.length>=100)break; } }
+      try { for await(const item of conversation.watch(pos[0],{cursor,signal:abort.signal,maxReconnects:0})) { events.push(item.event);if(companyOperation(item.event))await openBusiness().conversation({channel:'conversation',endpoint:target.endpoint,conversationId:pos[0]},item.event.message);cursor=item.event.id;if(events.length>=100)break; } }
       catch(error){if(!timedOut)throw error;}finally{clearTimeout(timer);}
       if(abort.signal.aborted&&!timedOut)fail('canceled',130);
       return reply({events,cursor,notice:'Bounded watch; resume with cursor or acknowledge the delivery for a named consumer.'},{delivery:delivery(cursor)});
@@ -411,8 +445,8 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       company_unavailable: 'The company service is unavailable or paused. Ask its operator to check availability before retrying; enrollment does not need to be repeated.',
     };
     const nextAction=[hints[code],retryHandle&&code!=='legacy_message_uncertain'?'Delivery is unconfirmed. Keep this sendOperation and use retry with the same handle when ready; do not create a replacement message.':undefined].filter(Boolean).join(' ');
-    return {out:{version:1,command,status:'error',requestId,...(retryHandle?{sendOperation:retryHandle}:{}),...(resume?{result:{resume}}:{}),error:{...details,...(httpStatus?{httpStatus}:{}),...(nextAction?{nextAction}:{})}},code:abort.signal.aborted?130:known?error.exitCode:['consumed','legacy_message_uncertain'].includes(code)?6:code==='binding_conflict'?5:['trusted_input_required','provider_unavailable','secure_store_locked','secure_store_unavailable'].includes(code)?4:['invalid_session','insufficient_scope','unauthorized','invalid_grant','provider_unauthorized'].includes(code)?3:1};
-  } finally { if(approvalTimer)clearTimeout(approvalTimer);process.off('SIGINT',canceled);process.off('SIGTERM',canceled);for(const dispose of [()=>releaseApproval?.(),()=>authStore?.close(),()=>conversationStore?.close(),()=>transport?.close?.(),()=>backend?.close?.(),()=>state?.close()])try{await dispose();}catch{/* Cleanup adapters cannot expose private errors. */} }
+    return {out:{version:1,command,status:'error',requestId,...(retryHandle?{sendOperation:retryHandle}:{}),...(resume?{result:{resume}}:command.startsWith('operation-')&&positionalHandle(argv)?{result:{attemptId:positionalHandle(argv)}}:{}),error:{...details,...(httpStatus?{httpStatus}:{}),...(nextAction?{nextAction}:{})}},code:abort.signal.aborted?130:known?error.exitCode:['consumed','legacy_message_uncertain'].includes(code)?6:code==='binding_conflict'?5:['trusted_input_required','provider_unavailable','secure_store_locked','secure_store_unavailable'].includes(code)?4:['invalid_session','insufficient_scope','unauthorized','invalid_grant','provider_unauthorized'].includes(code)?3:1};
+  } finally { if(approvalTimer)clearTimeout(approvalTimer);process.off('SIGINT',canceled);process.off('SIGTERM',canceled);for(const dispose of [()=>releaseApproval?.(),()=>authStore?.close(),()=>conversationStore?.close(),()=>business?.close(),()=>transport?.close?.(),()=>backend?.close?.(),()=>state?.close()])try{await dispose();}catch{/* Cleanup adapters cannot expose private errors. */} }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   const {out,code}=await main(process.argv.slice(2),process.env,{progress:value=>process.stderr.write(JSON.stringify(value)+'\n')});

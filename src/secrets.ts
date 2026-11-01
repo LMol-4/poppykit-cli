@@ -19,6 +19,8 @@ export interface SecureBackend {
   /** Trusted operator transport; must preserve SDK HTTPS/address/redirect/credential policy. */
   transport?: HttpTransport;
   browserController?: AgentBrowserController;
+  /** Trusted business consent/reconciliation; separate from enrollment and sign-in. */
+  business?: import('./business.js').BusinessBackend;
   close?(): Promise<void> | void;
 }
 export async function hiddenInput(label: string): Promise<string> {

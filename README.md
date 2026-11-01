@@ -1,12 +1,12 @@
 # PoppyKit CLI
 
 Terminal client for [Personal Agent Protocol draft 0.3](https://personalagentprotocol.org/docs/0.3/spec).
-Discover companies, authenticate and exchange conversations. [MIT](LICENSE).
+Discover companies, authenticate, exchange conversations and review business operations. [MIT](LICENSE).
 
 ## Install
 
 ```sh
-npm install --global @poppykit/cli@0.5.0
+npm install --global @poppykit/cli@0.6.0
 ```
 
 Linux requires `secret-tool` and an unlocked desktop keyring; see [Linux setup](docs/linux.md).
@@ -50,3 +50,5 @@ operation fields; raw provider/OS errors remain private.
 conversations, exit codes and API/browser/feedback commands. [API.md](API.md) maps
 backend exports/types. See [contributing](CONTRIBUTING.md), [security](SECURITY.md),
 [changelog](CHANGELOG.md) and the [release runbook](RELEASING.md).
+
+Business operations return exit 7 with `operation_required` and a saved `attemptId`. Run `operation-review HANDLE` in your own trusted terminal, then `operation-retry HANDLE` to send that exact approval. Enrollment and sign-in never approve business actions. Keep uncertain handles for reconciliation; see [business approval](docs/usage.md#business-operations).

@@ -48,8 +48,9 @@ const opaque={authorization:{secret:'business authorization',credential:[{refres
 const opaqueEvent={id:'event1',type:'message',created_at:'2026-10-24T00:00:00Z',message:{id:'message1',author: { type: 'agent' },role:'company',data:opaque,credential:{secret:'message extension'}},authorization:{secret:'event extension'}};
 for(const company of companies)company.behavior.resourceHandler=async (request,bound)=>{
   const u=new URL(request.url);
+  if(u.pathname==='/join/authorize'){const {code}=await request.json();const binding=browserJoins.get(code);assert.ok(binding&&binding.expires>Date.now());binding.authorized=true;return new Response(null,{status:204});}
   if(u.pathname==='/feedback'){reports.push(await request.json());return new Response(null,{status:202});}
-  if(u.pathname==='/api'||u.pathname==='/mcp')return Response.json({privateBody:'PRIVATE_API_CONTENT'});
+  if(u.pathname==='/api'||u.pathname==='/mcp')return Response.json({businessBody:'opaque-api-content'});
   if(request.method==='POST'){
     const body=await request.json();
     if(u.pathname.endsWith('/messages')&&!expectValue(bound.scopes).includes('record:edit'))return Response.json({error:'insufficient_scope'},{status:403,headers:{'www-authenticate':'DPoP error="insufficient_scope", scope="record:edit"'}});
@@ -58,7 +59,7 @@ for(const company of companies)company.behavior.resourceHandler=async (request,b
   return Response.json(u.pathname.endsWith('/events')?{conversation_id:'conversation1',status:'closed',responder:'agent',events:u.searchParams.get('cursor')?[]:[opaqueEvent],cursor:'event1',has_more:false,credential:{secret:'page extension'},delivery:{secret:'opaque page extension'},outcome:{status:'uncertain'}}:{conversation_id:'conversation1',status:'idle',responder:'agent',sendOperation:'company extension',outcome:{status:'cancelled'}});
 };
 const companyFor=(url:string)=>companies.find(c=>new URL(url).hostname===c.domain||new URL(url).hostname.endsWith('.'+c.domain));
-const browserJoins=new Map<string,{cookie:string;expires:number}>();
+const browserJoins=new Map<string,{cookie:string;expires:number;authorized?:boolean}>();
 async function companyRequest(request:Request){
   const company=companyFor(request.url);assert.ok(company,'verified company fixture destination');const u=new URL(request.url);
   if(u.pathname==='/.well-known/poppy.json'){
@@ -70,13 +71,11 @@ async function companyRequest(request:Request){
   if(u.pathname==='/join'){
     if(request.method==='GET'){
       const code=randomBytes(32).toString('base64url'),cookie='__Host-poppy_join='+randomBytes(32).toString('base64url');browserJoins.set(code,{cookie,expires:Date.now()+60000});
-      return new Response('<form method="post"><input type="hidden" name="code" value="'+code+'"><input name="proof"></form>',{headers:{'set-cookie':cookie+'; Path=/; Secure; HttpOnly; SameSite=Strict','cache-control':'no-store'}});
+      return new Response('<form method="post"><input type="hidden" name="code" value="'+code+'"></form>',{headers:{'set-cookie':cookie+'; Path=/; Secure; HttpOnly; SameSite=Strict','cache-control':'no-store'}});
     }
     const form=new URLSearchParams(await request.text()),code=expectValue(form.get('code')),binding=browserJoins.get(code);browserJoins.delete(code);
     assert.ok(binding&&binding.expires>Date.now()&&binding.cookie===request.headers.get('cookie'));
-    const jwt=expectValue(form.get('proof')),header=decodeProtectedHeader(jwt);assert.equal(header.typ,'dpop+jwt');assert.equal(header.alg,'ES256');assert.ok(header.jwk&&!('d' in header.jwk));
-    await compactVerify(jwt,await importJWK(header.jwk,'ES256'));const claims=decodeJwt(jwt);assert.equal(claims.htm,'POST');assert.equal(claims.htu,request.url);assert.equal(claims.nonce,code);assert.equal(claims.ath,undefined);
-    const key=await calculateJwkThumbprint(header.jwk),token=[...company.tokens.values()].find(t=>t.jkt===key);assert.ok(token&&company.sessions.get(token.sessionId));
+    assert.equal(form.has('proof'),false);assert.equal(binding.authorized,true);
     return new Response(null,{status:303,headers:{location:'https://'+company.domain+'/'}});
   }
   if(u.href===company.tokenEndpoint&&request.method==='POST'){const form=new URLSearchParams(await request.clone().text());if(form.get('code')===holdCode){heldResolve();await release;}}
@@ -98,13 +97,14 @@ async function browserEnrollment(request:Request){
   if(!browserApproved)return Response.json({status:'pending'});
   if(row.consumed)return Response.json({error:'consumed'},{status:400});
   row.consumed=true;
-  const result=await provider.enroll(new Request(providerUrl+'/enroll',{headers:{'x-operator-auth':'fixture-only'}}),{version:1,installationId:body.installationId,idempotencyKey:body.requestId});privateMaterial.push(result.credential);
+  const result=await provider.enroll(new Request(providerUrl+'/enroll',{headers:{'x-operator-auth':'fixture-only'}}),{version:1,installationId:body.installationId,idempotencyKey:body.requestId});privateMaterial.push(result.credential);companies[0].clients.add(result.clientId);
   return Response.json({status:'ready',...result});
 }
 const server=createServer(async(req,res)=>{try{
   let data='';for await(const chunk of req)data+=chunk;const input=JSON.parse(data),request=new Request(input.url,{method:input.method,headers:input.headers,...(input.body?{body:input.body}:{})});
   const response=new URL(input.url).pathname.startsWith('/enrollment/')?await browserEnrollment(request):new URL(input.url).origin===providerOrigin?await provider.handle(request):await companyRequest(request);
   if(enrollmentMode==='lost'&&input.url.endsWith('/enrollment/status')){res.destroy();return;}
+  if(response.ok&&new URL(input.url).origin===providerOrigin&&new URL(input.url).pathname.endsWith('/enroll')){const result=await response.clone().json();const body=JSON.parse(input.body);const company=companies.find(c=>c.domain===body.company);if(company&&result.clientId)company.clients.add(result.clientId);}
   if(lose&&input.method==='POST'&&input.url.endsWith('/conversations')){lose=false;res.destroy();return;}
   res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({status:response.status,headers:[...response.headers],body:await response.text()}));
 }catch{res.writeHead(500);res.end('{}');}});

@@ -96,3 +96,10 @@ certify a production keyring, physical terminal, browser engine, KMS or TLS depl
 Windows GNU tar is given archive basename plus directory cwd to avoid drive-colon
 remote parsing. Failure logs retain seven days. Expired/missing artifacts require a
 new full run, not relabeling old results. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+The current migration prepares CLI 0.6.0, client 0.6.0 and server 0.5.0. Registry
+absence was checked on 2026-11-01; recheck at publication. Final candidate pins must
+name actual commits and their tested archives. Native helper bytes/source hashes
+remain on the existing release artifact path. Business UI/recovery, independent
+wire peers, durable SDK cases and whole installed-artifact gates are required.
+No deployment or production data migration follows automatically from publication.

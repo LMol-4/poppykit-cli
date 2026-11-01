@@ -8,12 +8,11 @@ secret custody, hosted enrollment, authentication, profiles and exit codes.
 `dist/index.d.ts` and `dist/secrets.d.ts` declarations define the complete seam.
 A trusted local module exports `open({purpose,unattended})` returning durable
 `secrets` and a `healthCheck`. Optional enrollment authentication, trusted
-input, local signer, browser controller and transport remain private operator code.
+input, local signer, browser controller, business consent and transport remain private operator code.
 The backend example in usage is an integration outline: `operatorVault` and
 `operatorLogin` are adapters supplied by your application, not bundled services.
 
-Commands never accept Mediated passwords/codes as flags. API commands return
-status/target metadata rather than private response bodies/headers. Browser
+Commands never accept Mediated passwords/codes or business approval as flags. API commands preserve opaque business response bytes as base64; credentials and raw remote diagnostics remain outside the public error envelope. Browser
 joining requires an isolated agent-controlled controller. A company/provider URL
 cannot select a module to execute.
 
@@ -50,3 +49,22 @@ retry and never triggers another one-time redemption.
 `retryAt` is an exact decimal epoch-millisecond string; it can exceed JavaScript's
 safe numeric range. A saved enrollment result with `enrollment_finalize_required`
 (exit 6) needs local finalization with `enroll`, which never retrieves it again.
+
+Business controls use a distinct `attemptId` inside `result`, separate from auth
+operation IDs and `sendOperation`. `BusinessBackend` and `OperationReview` are
+exported types. Optional `SecureBackend.business` supplies trusted
+`confirm(input,signal)`, `checkTerms(request,operation)` and
+`reconcile(input,signal)`. Never accept model-produced consent or reconciliation.
+The default console UI displays complete inert Company, summary, terms, request,
+expiry, profile and authority data and requires a fresh random confirmation phrase.
+It never reads an approve flag, stdin or environment variable.
+
+API requests support GET/HEAD/POST/PUT/PATCH/DELETE and optional `--body-file`;
+bytes remain exact. Successful responses return
+`{status:"completed",result:{status:HTTP_STATUS,body:BASE64}}`. Approval-required
+403 returns `{status:"operation_required",attemptId,operation,request,nextAction}`,
+exit 7. Approved, declined, withdrawn, expired and interrupted decisions retain
+their actual status and exit 7; uncertain sends exit 6; completed results exit 0.
+Typed `operation_*` errors use exits 2/4/5/6 as appropriate. Cancellation exits 130
+and preserves recovery state. `result.retryAt` is an epoch-millisecond number;
+the auth error field `error.retryAt` remains its exact decimal string.
