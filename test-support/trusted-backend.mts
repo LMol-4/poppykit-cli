@@ -14,7 +14,7 @@ export async function open():Promise<SecureBackend>{
     else if(readyReceived&&process.env.FIXTURE_FINAL_STAGE_FAIL)throw new Error('PRIVATE_FINAL_STAGE_FAILURE');
     return stage(value);
   };
-  backend.enrollmentAuth=async()=>({'x-operator-auth':'fixture-only'});
+  backend.enrollmentAuth=async()=>({'x-operator-auth':'fixture-only','x-fixture-company':environment('FIXTURE_COMPANY')});
   backend.trustedInput={async collect(request):Promise<Record<string,string>>{return request.challenge?{code:'123456'}:{password:'PRIVATE_PASSWORD'};}};
   const transport:NonNullable<SecureBackend['transport']>={async fetch(request){
     const response=await fetch(environment('FIXTURE_TUNNEL'),{method:'POST',signal:request.signal,body:JSON.stringify({url:request.url,method:request.method,headers:[...request.headers],body:['GET','HEAD'].includes(request.method)?null:await request.text()})});
@@ -24,6 +24,8 @@ export async function open():Promise<SecureBackend>{
     return new Response(envelope.body||null,{status:envelope.status,headers});
   }};
   backend.transport=transport;
+  // Synthetic installed-artifact consent fixture only; this module is excluded from every package.
+  backend.business={async confirm(input){assert.equal(input.companyName,'direct');assert.ok(input.summary.includes('Exchange'));assert.deepEqual(input.terms?.authorization,{opaque:true});assert.ok(input.differences.length);return process.env.FIXTURE_BUSINESS_DECISION==='decline'?'decline':'approve';},async reconcile(){return {kind:'pending'};}};
   let joinCookie='';
   backend.browserController={kind:'agent-controlled',
     async loadJoinForm(url){const page=await transport.fetch(new Request(url));assert.equal(page.status,200);joinCookie=(page.headers.get('set-cookie')??'').split(';')[0];const code=/name="code" value="([^"]+)"/.exec(await page.text())?.[1];assert.ok(code);return {code};},

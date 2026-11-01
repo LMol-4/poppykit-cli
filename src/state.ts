@@ -5,7 +5,11 @@ export interface Profile { id: string; name: string; provider: string; domain: s
 export class State {
   private db: DatabaseSync;
   constructor(path: string) {
-    this.db = new DatabaseSync(path); this.db.exec('PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS cli_records(kind TEXT NOT NULL,id TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(kind,id));');
+    this.db = new DatabaseSync(path);
+    const deadline=Date.now()+5000;
+    // First-open WAL races can return BUSY immediately despite busy_timeout.
+    for(;;)try{this.db.exec('PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS cli_records(kind TEXT NOT NULL,id TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(kind,id));');break;}
+    catch(error){if(![5,6].includes((error as {errcode?:number}).errcode??0)||Date.now()>=deadline){this.db.close();throw error;}Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,10);}
   }
   close() { this.db.close(); }
   get<T>(kind: string, id: string): T | undefined { const row = this.db.prepare('SELECT body FROM cli_records WHERE kind=? AND id=?').get(kind, id); return row ? JSON.parse(row.body as string) : undefined; }

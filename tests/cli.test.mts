@@ -302,7 +302,7 @@ test('separate processes concurrently create profiles without lost writes',async
   const home=await mkdtemp(join(tmpdir(),'concurrent ü '));try{
     const cli=new URL('../dist/cli.js',import.meta.url);
     const run=(n:string)=>new Promise<{code:number|null;out:string;err:string}>((resolve,reject)=>{const child=spawn(process.execPath,[fileURLToPath(cli),'setup','--profile',n,'--provider','https://identity.example/v1','--company','company.example','--json'],{env:{...process.env,POPPYKIT_HOME:home},windowsHide:true});let out='',err='';child.stdout.on('data',d=>out+=d);child.stderr.on('data',d=>err+=d);child.on('error',reject);child.on('close',code=>resolve({code,out,err}));});
-    const results=await Promise.all(['one','two','three'].map(run));for(const r of results)assert.equal(r.code,0,r.err+r.out);const state=new State(join(home,'cli.sqlite'));assert.equal(state.list('profile').length,3);state.close();
+    const names=Array.from({length:12},(_,i)=>'profile_'+i),results=await Promise.all(names.map(run));for(const r of results)assert.equal(r.code,0,r.err+r.out);const state=new State(join(home,'cli.sqlite'));assert.equal(state.list('profile').length,names.length);state.close();
   }finally{await rm(home,{recursive:true,force:true});}
 });
 test('invocation cancellation fences a late Direct token response and retains uncertainty',async()=>{

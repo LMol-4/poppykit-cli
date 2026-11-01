@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import type { JWK, ProtectedHeaderParameters } from 'jose';
 import type { HttpTransport } from '@poppykit/client';
 // Independent fake Company (discovery, token, authorization and revocation endpoints, conversation resource), written from spec 3, 4.1-4.5, 4.8-4.9.
-import { compactVerify, decodeProtectedHeader, importJWK, calculateJwkThumbprint } from 'jose';
+import { compactVerify, decodeJwt, decodeProtectedHeader, importJWK, calculateJwkThumbprint } from 'jose';
 import { createHash, randomUUID } from 'node:crypto';
 
 
@@ -114,7 +114,7 @@ export function createFakeCompany({ name = 'shop', jwks, clientId, now, issuerPa
   // The User's browser at the authorization endpoint (spec 4.5 steps 2-3): approve some scopes for an account, or decline.
   company.authorize = (authorizationUrl, { account, approve = null, deny = false }) => {
     const url = new URL(authorizationUrl); const q = (name:string) => url.searchParams.get(name);
-    if (url.origin + url.pathname !== authorizationEndpoint || q('response_type') !== 'code' || q('client_id') !== clientId || q('code_challenge_method') !== 'S256' || !q('code_challenge') || !q('state') || !/^[A-Za-z0-9_-]{43}$/.test(q('dpop_jkt') ?? '')) throw new Error('bad authorization request');
+    if (url.origin + url.pathname !== authorizationEndpoint || q('response_type') !== 'code' || !company.clients.has(q('client_id')??'') || q('code_challenge_method') !== 'S256' || !q('code_challenge') || !q('state') || !/^[A-Za-z0-9_-]{43}$/.test(q('dpop_jkt') ?? '')) throw new Error('bad authorization request');
     if (!redirectUris.includes(expectValue(q('redirect_uri')))) throw new Error('unregistered redirect_uri');
     const requested = expectValue(q('scope')).split(' ');
     if (!requested.every(scope => directScopes.includes(scope))) throw new Error('invalid_scope');
@@ -190,7 +190,7 @@ export function createFakeCompany({ name = 'shop', jwks, clientId, now, issuerPa
   async function token(request:Request) {
     if (company.behavior.tokenError) return json(company.behavior.tokenError.status, company.behavior.tokenError.body);
     const form = new URLSearchParams(await request.text());
-    if (form.get('client_assertion_type') !== CLIENT_ASSERTION || form.get('client_id') !== clientId) throw new Reject(400, 'invalid_request');
+    if (form.get('client_assertion_type') !== CLIENT_ASSERTION || (!company.clients.has(form.get('client_id')??'')||decodeJwt(expectValue(form.get('client_assertion'))).iss!==form.get('client_id'))) throw new Reject(400, 'invalid_request');
     if (form.get('grant_type') === 'authorization_code') return exchangeCode(request, form);
     if (form.get('grant_type') === 'urn:ietf:params:oauth:grant-type:device_code') {
       await company.verifyAssertion(form.get('client_assertion'), 'client'); const jkt = request.headers.has('dpop') ? await verifyProof(request) : '';
@@ -208,7 +208,7 @@ export function createFakeCompany({ name = 'shop', jwks, clientId, now, issuerPa
       let scopes:string[],resource:string|null;
       if(id){
         const challenge=company.challenges.get(id);
-        if(!challenge||challenge.clientId!==clientId)throw new Reject(400,'invalid_grant');
+        if(!challenge||challenge.clientId!==form.get('client_id'))throw new Reject(400,'invalid_grant');
         if(challenge.expires<=now())throw new Reject(400,'expired_token');
         assert.equal(form.has('scope'),false);assert.equal(form.has('password'),false);
         if(++behavior.attempts>=3)throw new Reject(400,'invalid_grant');
@@ -217,7 +217,7 @@ export function createFakeCompany({ name = 'shop', jwks, clientId, now, issuerPa
       }else{
         if(!form.get('password')||behavior.status==='access_denied')throw new Reject(400,'invalid_grant');
         scopes=(form.get('scope')??'').split(' ');resource=form.get('resource');
-        if(behavior.codeRequired){const id=randomUUID();company.challenges.set(id,{clientId,scopes,resource,expires:now()+60000});return json(400,{error:'code_required',sign_in_id:id,sent_to:'Your phone',expires_in:60});}
+        if(behavior.codeRequired){const id=randomUUID();company.challenges.set(id,{clientId:expectValue(form.get('client_id')),scopes,resource,expires:now()+60000});return json(400,{error:'code_required',sign_in_id:id,sent_to:'Your phone',expires_in:60});}
       }
       return issueSignedIn(jkt,behavior.account,behavior.scopes.filter(scope=>scopes.includes(scope)),resource);
     }

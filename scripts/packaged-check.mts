@@ -43,12 +43,17 @@ let holdCode:string|null|undefined;let heldResolve:()=>void=()=>{},heldRelease:(
 let held=new Promise<void>(r=>heldResolve=r),release=new Promise<void>(r=>heldRelease=r);
 const releases:(()=>void)[]=[];
 function resetHold(code:string|null){holdCode=code;held=new Promise(r=>heldResolve=r);release=new Promise(r=>heldRelease=r);releases.push(()=>heldRelease());}
-const sends:unknown[]=[],reports:unknown[]=[],outputs:string[]=[];let lose=true;
+const sends:unknown[]=[],reports:unknown[]=[],outputs:string[]=[];let lose=true,loseBusiness=true,businessEffects=0;const businessBodies:string[]=[];
 const opaque={authorization:{secret:'business authorization',credential:[{refresh_token:'business field'}]},secretRef:'business reference',nested:{dpopKeyRef:'business reference',cookie:'business cookie'}};
 const opaqueEvent={id:'event1',type:'message',created_at:'2026-10-24T00:00:00Z',message:{id:'message1',author: { type: 'agent' },role:'company',data:opaque,credential:{secret:'message extension'}},authorization:{secret:'event extension'}};
 for(const company of companies)company.behavior.resourceHandler=async (request,bound)=>{
   const u=new URL(request.url);
   if(u.pathname==='/join/authorize'){const {code}=await request.json();const binding=browserJoins.get(code);assert.ok(binding&&binding.expires>Date.now());binding.authorized=true;return new Response(null,{status:204});}
+  if(u.pathname==='/business'){
+    const body=await request.text(),approval=request.headers.get('poppy-approval');businessBodies.push(body);
+    if(!approval)return Response.json({error:'approval_required',operation:{operation_id:'installed_action',revision:'installed_revision',summary:'Exchange one item for $70.',terms:{authorization:{opaque:true},amount:70},expires_at:new Date(Date.now()+900000).toISOString()}},{status:403});
+    assert.equal(approval,'operation_id="installed_action", revision="installed_revision"');assert.equal(request.headers.get('idempotency-key'),null);assert.equal(body,businessBodies[0]);if(!businessEffects)businessEffects++;return Response.json({authorization:{opaque:true},receipt:'installed-effect'});
+  }
   if(u.pathname==='/feedback'){reports.push(await request.json());return new Response(null,{status:202});}
   if(u.pathname==='/api'||u.pathname==='/mcp')return Response.json({businessBody:'opaque-api-content'});
   if(request.method==='POST'){
@@ -64,7 +69,7 @@ async function companyRequest(request:Request){
   const company=companyFor(request.url);assert.ok(company,'verified company fixture destination');const u=new URL(request.url);
   if(u.pathname==='/.well-known/poppy.json'){
     const body=await(await company.handle(new Request(`https://${company.domain}/.well-known/poppy.json`))).json();
-    body.organization.domain=u.hostname;body.apis=[{type:'openapi',url:`https://${company.domain}/schema`,description:'Generic API'},{type:'mcp',url:`https://api.${company.domain}/mcp`,description:'Generic MCP'}];body.web={browser_session_endpoint:`https://${company.domain}/join`};body.feedback={endpoint:`https://api.${company.domain}/feedback`};return Response.json(body);
+    body.organization.domain=u.hostname;body.extensions={...body.extensions,operations:{version:'2'}};body.apis=[{type:'openapi',url:`https://${company.domain}/schema`,description:'Generic API'},{type:'mcp',url:`https://api.${company.domain}/mcp`,description:'Generic MCP'}];body.web={browser_session_endpoint:`https://${company.domain}/join`};body.feedback={endpoint:`https://api.${company.domain}/feedback`};return Response.json(body);
   }
   if(u.pathname.startsWith('/.well-known/oauth-authorization-server')){const body=await(await company.handle(request)).json();body.protected_resources.push(`https://api.${company.domain}`);return Response.json(body);}
   if(u.pathname==='/.well-known/oauth-protected-resource/mcp')return Response.json({resource:`https://api.${company.domain}/mcp`,authorization_servers:[company.issuer],dpop_signing_alg_values_supported:['ES256']});
@@ -82,7 +87,7 @@ async function companyRequest(request:Request){
   return company.handle(request);
 }
 const metadata=createMetadataResolver({fetch:companyRequest});
-const provider=createProvider({clientId,callbackUrl,jwksUri:providerOrigin+'/jwks',clientName:'Generic',store,cipher:createResultCipher(randomBytes(32)),metadata,authenticateEnrollment:async req=>req.headers.get('x-operator-auth')==='fixture-only'?{subject:'visitor',allowedCompanies:companies.map(c=>c.domain)}:null,signer:{kid:'key',publicJwk:async()=>jwk,sign:async input=>new Uint8Array(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},pair.privateKey,new Uint8Array(input)))}});
+const provider=createProvider({clientId,callbackUrl,jwksUri:providerOrigin+'/jwks',clientName:'Generic',operations:{ready:async()=>true},store,cipher:createResultCipher(randomBytes(32)),metadata,authenticateEnrollment:async req=>req.headers.get('x-operator-auth')==='fixture-only'?{subject:'visitor',allowedCompanies:[expectValue(req.headers.get('x-fixture-company'))]}:null,signer:{kid:'key',publicJwk:async()=>jwk,sign:async input=>new Uint8Array(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},pair.privateKey,new Uint8Array(input)))}});
 let browserApproved=false,enrollmentMode='ready',enrollmentPolls=0;
 const enrollments=new Map<string,{challenge:string;installationId:string;consumed:boolean}>(),privateMaterial:string[]=[];
 async function browserEnrollment(request:Request){
@@ -97,14 +102,15 @@ async function browserEnrollment(request:Request){
   if(!browserApproved)return Response.json({status:'pending'});
   if(row.consumed)return Response.json({error:'consumed'},{status:400});
   row.consumed=true;
-  const result=await provider.enroll(new Request(providerUrl+'/enroll',{headers:{'x-operator-auth':'fixture-only'}}),{version:1,installationId:body.installationId,idempotencyKey:body.requestId});privateMaterial.push(result.credential);companies[0].clients.add(result.clientId);
+  const result=await provider.enroll(new Request(providerUrl+'/enroll',{headers:{'x-operator-auth':'fixture-only','x-fixture-company':companies[0].domain}}),{version:1,installationId:body.installationId,idempotencyKey:body.requestId});privateMaterial.push(result.credential);companies[0].clients.add(result.clientId);
   return Response.json({status:'ready',...result});
 }
 const server=createServer(async(req,res)=>{try{
   let data='';for await(const chunk of req)data+=chunk;const input=JSON.parse(data),request=new Request(input.url,{method:input.method,headers:input.headers,...(input.body?{body:input.body}:{})});
   const response=new URL(input.url).pathname.startsWith('/enrollment/')?await browserEnrollment(request):new URL(input.url).origin===providerOrigin?await provider.handle(request):await companyRequest(request);
   if(enrollmentMode==='lost'&&input.url.endsWith('/enrollment/status')){res.destroy();return;}
-  if(response.ok&&new URL(input.url).origin===providerOrigin&&new URL(input.url).pathname.endsWith('/enroll')){const result=await response.clone().json();const body=JSON.parse(input.body);const company=companies.find(c=>c.domain===body.company);if(company&&result.clientId)company.clients.add(result.clientId);}
+  if(response.ok&&new URL(input.url).origin===providerOrigin&&new URL(input.url).pathname.endsWith('/enroll')){const result=await response.clone().json();const company=companies.find(c=>c.domain===request.headers.get('x-fixture-company'));if(company&&result.clientId)company.clients.add(result.clientId);}
+  if(loseBusiness&&new URL(input.url).pathname==='/business'&&request.headers.has('poppy-approval')){loseBusiness=false;res.destroy();return;}
   if(lose&&input.method==='POST'&&input.url.endsWith('/conversations')){lose=false;res.destroy();return;}
   res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({status:response.status,headers:[...response.headers],body:await response.text()}));
 }catch{res.writeHead(500);res.end('{}');}});
@@ -112,7 +118,7 @@ await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
 const backendFile=join(project,'trusted-fixture.mjs');
 await writeFile(backendFile,await readFile(new URL('../test-support/trusted-backend.mjs',import.meta.url)));
 const address=server.address();assert.ok(address&&typeof address!=='string');
-const env={...process.env,PATH:join(process.execPath,'..'),POPPYKIT_HOME:join(home,'state'),FIXTURE_TUNNEL:`http://127.0.0.1:${address.port}`,FIXTURE_SECRET_DIRECTORY:join(home,'ciphertext'),FIXTURE_UNLOCK:randomBytes(32).toString('base64url')};
+const env={...process.env,PATH:join(process.execPath,'..'),POPPYKIT_HOME:join(home,'state'),FIXTURE_TUNNEL:`http://127.0.0.1:${address.port}`,FIXTURE_SECRET_DIRECTORY:join(home,'ciphertext'),FIXTURE_UNLOCK:randomBytes(32).toString('base64url'),FIXTURE_COMPANY:companies[0].domain};
 function run(args:string[],extra:NodeJS.ProcessEnv={}){return new Promise<{code:number|null;json:ReturnType<typeof reply>;err:string}>((resolve,reject)=>{const child=spawn(process.execPath,[cli,...args,'--json'],{cwd:project,env:{...env,...extra},windowsHide:true});let out='',err='';child.stdout.on('data',d=>out+=d);child.stderr.on('data',d=>err+=d);child.on('error',reject);child.on('close',code=>{try{outputs.push(out,err);assert.ok(!out.includes('PRIVATE_')&&!err.includes('PRIVATE_'),'secret sentinel leaked to process output');resolve({code,json:reply(out?JSON.parse(out):null),err});}catch(e){reject(e);}});});}
 async function ok(args:string[]){const r=await run(args);assert.equal(r.code,0,JSON.stringify(r.json));return r.json.result;}
 try{
@@ -145,9 +151,17 @@ try{
   const delivered=await run(['read','conversation1','--consumer','reader']);assert.equal(delivered.code,0);const page=delivered.json.result;assert.ok(delivered.json.delivery);assert.deepEqual(page.events,[opaqueEvent]);assert.deepEqual(page.toJSON().credential,{secret:'page extension'});assert.deepEqual(page.toJSON().delivery,{secret:'opaque page extension'});await ok(['ack',delivered.json.delivery]);const next=await ok(['read','conversation1','--consumer','reader']);assert.equal(next.events.length,0);
   const watched=await ok(['watch','conversation1']);assert.equal(watched.cursor,'event1');assert.deepEqual(watched.events,[opaqueEvent]);
   await ok(['api-target','--api',`https://${companies[0].domain}/schema`,'--destination',`https://api.${companies[0].domain}/api`]);await ok(['api-request','--api',`https://${companies[0].domain}/schema`,'--destination',`https://api.${companies[0].domain}/api`]);await ok(['api-request','--api',`https://api.${companies[0].domain}/mcp`,'--destination',`https://api.${companies[0].domain}/mcp`]);await ok(['browser-join','--return-to',`https://${companies[0].domain}/home`]);await ok(['feedback','--task','A generic task','--description','A generic missing capability']);assert.equal(reports.length,1);
+  const businessFile=join(project,'business-request.json'),businessBody=' {"authorization":{"opaque":true}, "amount":70}\n';await writeFile(businessFile,businessBody);
+  const businessArgs=['api-request','--api',`https://${companies[0].domain}/schema`,'--destination',`https://api.${companies[0].domain}/business`,'--method','POST','--body-file',businessFile];
+  const required=await run(businessArgs);assert.equal(required.code,7);assert.equal(required.json.result.status,'operation_required');const handle=String(required.json.result.toJSON().attemptId);assert.equal(businessEffects,0);
+  assert.equal((await run(['operation-retry',handle])).code,2);assert.equal((await run(['operation-review',handle])).json.result.status,'approved');assert.equal(businessEffects,0);
+  assert.equal((await run(['operation-retry',handle])).code,6);assert.equal(businessEffects,1);assert.equal((await run(['operation-status',handle])).json.result.status,'uncertain');assert.equal((await run(['operation-reconcile',handle])).code,6);
+  const completed=await run(['operation-retry',handle]);assert.equal(completed.code,0);assert.equal(completed.json.result.status,'completed');assert.equal(businessEffects,1);assert.ok(businessBodies.every(body=>body===businessBody));
+  const businessDeclined=await run([...businessArgs.slice(0,4),`https://api.${companies[0].domain}/business?decline=1`,...businessArgs.slice(5)]);assert.equal(businessDeclined.code,7);const declinedHandle=String(businessDeclined.json.result.toJSON().attemptId);assert.equal((await run(['operation-review',declinedHandle],{FIXTURE_BUSINESS_DECISION:'decline'})).json.result.status,'declined');assert.equal((await run(['operation-retry',declinedHandle])).code,2);assert.equal(businessEffects,1);
+  await rm(businessFile);
   await ok(['retry-remove','retry1']);await ok(['sign-out']);assert.equal((await ok(['scopes',...requested])).sufficient,false);assert.notEqual((await run(['send','conversation1','--text','After revocation','--send-operation','revoked'])).code,0,'revocation prevents protected continuation');
   for(let i=1;i<companies.length;i++){
-    const name=i===1?'device':'mediated',p=['--profile',name];await ok(['setup',...p,'--provider',providerUrl,'--company',companies[i].domain]);await ok(['enroll',...p]);await ok(['connect',...p]);assert.equal((await run(['read','conversation1',...p])).code,5,'profile/company cannot inherit a conversation binding');const methods=await ok(['scopes',...p,'--scope','orders:read']);assert.deepEqual(methods.methods.map(row=>row.method),[name]);const started=await ok(['auth-start','--no-wait',...p,'--method',name,'--scope','orders:read']);assert.equal(started.outcome.status,'pending');if(name==='device')await new Promise(r=>setTimeout(r,5100));const done=await ok(['auth-continue',started.outcome.operationId,...p]);assert.equal(done.status,'completed');await ok(['sign-out',...p]);
+    const name=i===1?'device':'mediated',p=['--profile',name];await ok(['setup',...p,'--provider',providerUrl,'--company',companies[i].domain]);{const enrolled=await run(['enroll',...p],{FIXTURE_COMPANY:companies[i].domain});assert.equal(enrolled.code,0,JSON.stringify(enrolled.json));}await ok(['connect',...p]);assert.equal((await run(['read','conversation1',...p])).code,5,'profile/company cannot inherit a conversation binding');const methods=await ok(['scopes',...p,'--scope','orders:read']);assert.deepEqual(methods.methods.map(row=>row.method),[name]);const started=await ok(['auth-start','--no-wait',...p,'--method',name,'--scope','orders:read']);assert.equal(started.outcome.status,'pending');if(name==='device')await new Promise(r=>setTimeout(r,5100));const done=await ok(['auth-continue',started.outcome.operationId,...p]);assert.equal(done.status,'completed');await ok(['sign-out',...p]);
   }
   await ok(['setup','--profile','browser','--provider',providerUrl,'--enrollment',providerOrigin+'/enrollment','--company',companies[0].domain]);
   const browserStart=await ok(['enroll','--no-wait','--profile','browser']);assert.ok(browserStart.toJSON().browserUrl);
@@ -168,5 +182,5 @@ try{
   for(const secret of privateMaterial)assert.ok(outputs.every(output=>!output.includes(secret)),'browser enrollment secret leaked');
   // The peer actually checked signatures, replay IDs, DPoP, PKCE, session/UserID and account bindings.
   for(const c of companies){assert.ok(c.assertions.length>0);assert.ok(c.proofs.length>0);for(const secret of [...c.tokens.keys(),...c.grants.keys(),...c.secrets])assert.ok(outputs.every(out=>!out.includes(expectValue(secret))),'issued credential/proof leaked to stdout or stderr');}
-  console.log(JSON.stringify({status:'passed',platform:process.platform,node:process.version,checks:['npm-bin','exports','all-three-auth-restarts','JWT-DPoP-PKCE-peer-verification','live-auth-second-process','concurrent-retry','stable-message-id','partial-consent','declined-successful-upgrade','continued-conversation','scope-hook-rejects-model-text','revocation','missing-locked-store','no-opener-keyring','unicode-space-paths','consumer-ack-watch-cursor','J4-openapi-mcp-browser-feedback'],transport:'explicit-fixture-tunnel; no TLS/native-keyring/browser-engine claim'}));
+  console.log(JSON.stringify({status:'passed',platform:process.platform,node:process.version,checks:['npm-bin','exports','all-three-auth-restarts','JWT-DPoP-PKCE-peer-verification','live-auth-second-process','concurrent-retry','stable-message-id','partial-consent','declined-successful-upgrade','continued-conversation','scope-hook-rejects-model-text','revocation','missing-locked-store','no-opener-keyring','unicode-space-paths','consumer-ack-watch-cursor','J4-openapi-mcp-browser-feedback','business-required-trusted-consent-decline-resume-retry-reconciliation'],transport:'explicit-fixture-tunnel; no TLS/native-keyring/browser-engine claim'}));
 }finally{heldRelease();for(const release of releases)release();server.closeAllConnections();await new Promise(r=>server.close(r));store.close();await rm(home,{recursive:true,force:true});await rm(peerFile,{force:true});await rm(backendFile,{force:true});}

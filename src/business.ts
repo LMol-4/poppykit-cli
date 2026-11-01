@@ -116,6 +116,7 @@ export function createBusinessController(options: {
   }
   function reserve(request: OperationRequest, context: BusinessClientContext, apiUrl?: string, scopes: string[] = [], identity: unknown = request): { action: Action; existing: boolean } {
     return state.atomic(() => {
+      // shortcut: identical API snapshots share one retained action; add a trusted new-action flow when repetition is required.
       const key = createHash('sha256').update(JSON.stringify({ profileId: profile.id, enrollmentRef: profile.credentialRef, connectionId: options.connectionId, request:identity })).digest('hex');
       const old = state.list<Action>('business').find(row => row.value.key === key)?.value;
       if (old) return { action: bound(old.id), existing: true };
