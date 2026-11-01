@@ -282,7 +282,9 @@ jobs:
       - run: node scripts/release-candidate.mjs check .candidate/artifacts
         env:
           EXPECTED_MANIFEST_SHA: ${{ needs.candidate.outputs.manifest-sha }}
-      - run: node scripts/install-candidate.mjs .candidate/artifacts
+      - run: node scripts/install-source-deps.mjs
+      - run: node scripts/install-candidate.mjs .candidate/artifacts source
+      - run: node --no-experimental-strip-types --test --test-name-pattern="Windows opener" tests/cli.test.mjs
       - run: node scripts/packaged-check.mjs ".candidate/artifacts/clean install ü" 2>&1 | tee .candidate/packaged.log
         env:
           POPPYKIT_TEST_PROVIDER_ORIGIN: https://operator-secondary.example
