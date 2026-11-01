@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.2
+
+Pin client 0.6.1 and verify against server 0.5.1, including the SDK fix for lost PostgreSQL connections. Trusted operation review and native credential custody are unchanged.
+
 ## 0.6.1
 
 Trusted business review now receives the exact operation ID/revision and context. A locally configured `business-backend --module` supplies consent/reconciliation while retaining the existing native credential backend. Module failures fail closed with private diagnostics.
