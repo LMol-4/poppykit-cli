@@ -91,7 +91,7 @@ async function fixture(operations=false){
   const sent:unknown[]=[];let loseSend=false,unavailable=false,mediated=0;
   const token=(signedIn:boolean,session='session1')=>({access_token:signedIn?'PRIVATE_ACCESS':'PRIVATE_SESSION',token_type:'Bearer',expires_in:300,scope:signedIn?'orders:read':'',...(signedIn?{refresh_token:'PRIVATE_ACCOUNT'}:{})});
   const transport:HttpTransport={async fetch(request){const u=new URL(request.url);if(u.hostname==='identity.example')return provider.handle(request);if(u.pathname==='/.well-known/poppy.json')return Response.json(doc);if(u.pathname==='/.well-known/oauth-authorization-server/issuer')return Response.json(authorization);if(u.pathname==='/.well-known/oauth-protected-resource')return Response.json({resource:'https://company.example',authorization_servers:[issuer]});if(u.pathname.startsWith('/.well-known/oauth-protected-resource/'))return new Response(null,{status:404});if(u.pathname==='/schema')return Response.json({openapi:'3.1.0',servers:[{url:'https://company.example'}]});if(u.pathname==='/business'){const body=await request.text(),approval=request.headers.get('poppy-approval');business.requests.push({body,approval});if(!approval)return Response.json({error:'approval_required',operation:business.operation},{status:403});assert.equal(approval,'operation_id="business_action", revision="revision_one"');assert.equal(request.headers.has('idempotency-key'),false);if(business.mode==='reproposal')return Response.json({error:'approval_required',operation:{...business.operation,revision:'revision_two'}},{status:403});if(business.mode==='pending')return new Response(null,{status:202,headers:{'retry-after':'1'}});if(!business.effects)business.effects++;if(business.mode==='lost'){business.mode='normal';throw new Error('PRIVATE_REMOTE_DIAGNOSTIC');}return Response.json({password:'opaque-business-result',access_token:{amount:70}});}if(u.pathname==='/token'){const form=new URLSearchParams(await request.text());assert.ok(['authorization_code','refresh_token','urn:ietf:params:oauth:grant-type:device_code','https://personalagentprotocol.org/grant/mediated-sign-in'].includes(form.get('grant_type')??''));assert.equal(form.has('assertion'),false);assert.equal(form.has('session_id'),false);if(form.get('grant_type')==='https://personalagentprotocol.org/grant/mediated-sign-in'){mediated++;if(!form.has('sign_in_id')){assert.equal(form.get('password'),'PRIVATE_PASSWORD');return Response.json({error:'code_required',sign_in_id:'challenge1',sent_to:'email',expires_in:600},{status:400});}assert.equal(form.get('one_time_code'),'PRIVATE_OTP');assert.equal(form.has('password'),false);}return Response.json(token(true));}if(u.pathname==='/device')return Response.json({device_code:'PRIVATE_DEVICE',user_code:'USER-CODE',verification_uri:'https://company.example/verify',expires_in:600,interval:1});if(u.pathname.startsWith('/mediated')){mediated++;const body=await request.json();if(mediated===1){assert.equal(body.credentials.password,'PRIVATE_PASSWORD');return Response.json({status:'code_required',sign_in_id:'challenge1',code:{sent_to:'email'},expires_at:new Date(Date.now()+600000).toISOString()});}assert.equal(body.code,'PRIVATE_OTP');return Response.json({status:'complete',...token(true)});}if(u.pathname==='/revoke')return new Response(null,{status:200});if(u.pathname.startsWith('/conversations')){if(request.method==='POST'){sent.push(await request.json());if(unavailable)return Response.json({error:'PRIVATE_REMOTE_BODY'},{status:503});if(loseSend){loseSend=false;throw new Error('PRIVATE_FAILURE');}return Response.json({conversation_id:'conversation1',status:'idle',responder:'agent'});}return Response.json({conversation_id:'conversation1',status:'idle',responder:'agent',events:business.events,cursor:business.events.length?'event_business':null,has_more:false});}throw new Error('unexpected fixture destination '+request.url);}};
-  const run=async (args:string[])=>{const r=await main([...args,'--no-wait','--json'],{POPPYKIT_HOME:home},{backend,transport});return {...r,out:reply(r.out)};};
+  const run=async (args:string[],sdk?:typeof import('@poppykit/client'))=>{const r=await main([...args,'--no-wait','--json'],{POPPYKIT_HOME:home},{backend,transport,sdk});return {...r,out:reply(r.out)};};
   const ok=async (args:string[])=>{const result=await run(args);assert.equal(result.code,0,JSON.stringify(result.out));assert.equal(typeof result.out,'object');return result.out.result;};
   await ok(['setup','--provider','https://identity.example/v1','--company','company.example']);await ok(['enroll']);
   return {home,backend,provider,transport,run,ok,sent,secrets,business,setLoseSend:()=>loseSend=true,setUnavailable:(value:boolean)=>unavailable=value,close:async()=>{store.close();await rm(home,{recursive:true,force:true});}};
@@ -591,7 +591,6 @@ test('business conversation revisions replace unsent consent and a declined acti
     const event=(operation:typeof f.business.operation)=>({id:'event_business',type:'message',created_at:new Date().toISOString(),message:{id:'proposal_business',role:'company',author:{type:'agent'},operation}});
     f.business.events=[event(f.business.operation)];
     const first=(await f.run(['read','conversation1'])).out.result.toJSON().operations as {attemptId:string}[],id=first[0].attemptId;
-    f.backend.business={async confirm(){return 'approve';}};await f.run(['operation-review',id]);
     const revised={...f.business.operation,revision:'revision_two',summary:'Exchange costs $90',terms:{...f.business.operation.terms,amount:'90.00'}};
     f.business.events=[event(f.business.operation),event(revised)];await f.run(['read','conversation1']);
     assert.equal((await f.run(['operation-status',id])).out.result.status,'operation_required');
@@ -624,4 +623,42 @@ test('business terminal quotes controls and refuses detached stdin approval',asy
   const file=new URL('../dist/business.js',import.meta.url).href;
   const script=`import {terminalBusinessConsent} from ${JSON.stringify(file)};try{await terminalBusinessConsent({attemptId:'synthetic',companyId:'https://example.com',companyName:'Company',summary:'Synthetic',differences:[],profile:'test',authority:'session:synthetic',expiresAt:'2099-01-01T00:00:00Z',request:{channel:'api',method:'POST',url:'https://example.com/action',body:null}},new AbortController().signal);process.exitCode=1;}catch(error){if(error.code!=='trusted_terminal_required')throw error;console.log(error.code);}`;
   const child=spawn(process.execPath,['--input-type=module','-e',script],{detached:true,stdio:['pipe','pipe','pipe'],windowsHide:true});let out='',err='';child.stdout.on('data',b=>out+=b);child.stderr.on('data',b=>err+=b);child.stdin.end('approve\n');const [code]=await once(child,'close');assert.equal(code,0,err);assert.equal(out.trim(),'trusted_terminal_required');
+});
+
+
+test('business an unseen older page cannot erase a later approved revision',async()=>{
+  const f=await fixture(true);try{
+    await f.ok(['connect']);await f.ok(['start','--text','Please exchange']);
+    const later={...f.business.operation,revision:'revision_two',summary:'Later valid exchange terms'},event=(operation:typeof later)=>({id:'event_business',type:'message',created_at:new Date().toISOString(),message:{id:'proposal_business',role:'company',author:{type:'agent'},operation}});
+    f.business.events=[event(later)];const observed=(await f.run(['read','conversation1','--cursor','resumed_cursor'])).out.result.toJSON().operations as {attemptId:string}[],id=observed[0].attemptId;
+    f.backend.business={async confirm(input){assert.equal(input.summary,later.summary);return 'approve';}};assert.equal((await f.run(['operation-review',id])).out.result.status,'approved');
+    f.business.events=[event(f.business.operation)];await f.run(['read','conversation1']);const current=(await f.run(['operation-status',id])).out.result.toJSON();assert.equal(current.status,'approved');assert.equal((current.operation as {revision:string}).revision,'revision_two');assert.equal(f.business.effects,0);
+  }finally{await f.close();}
+});
+
+
+test('business history mutation and actual review serialize across independent CLI invocations',async()=>{
+  const f=await fixture(true);try{
+    await f.ok(['connect']);await f.ok(['start','--text','Please exchange']);
+    const event=(operation:typeof f.business.operation)=>({id:'event_business',type:'message',created_at:new Date().toISOString(),message:{id:'proposal_business',role:'company',author:{type:'agent'},operation}});
+    f.business.events=[event(f.business.operation)];const operations=(await f.run(['read','conversation1'])).out.result.toJSON().operations as {attemptId:string}[],id=operations[0].attemptId;
+    f.business.events=[event({...f.business.operation,revision:'revision_two',summary:'New exact terms'})];
+    let entered!:()=>void,release!:()=>void;const ready=new Promise<void>(r=>entered=r),gate=new Promise<void>(r=>release=r),sdk=await import('@poppykit/client');
+    const held={...sdk,createClientAuth(options:Parameters<typeof sdk.createClientAuth>[0]){const auth=sdk.createClientAuth(options);let first=true;return {...auth,async businessContext(connectionId:string){if(first){first=false;entered();await gate;}return auth.businessContext(connectionId);}};}};
+    const reading=f.run(['read','conversation1'],held);await ready;f.backend.business={async confirm(){return 'approve';}};
+    assert.equal((await f.run(['operation-review',id])).code,5,'the earlier history mutation owns the consent fence');release();assert.equal((await reading).code,0);
+    assert.equal((await f.run(['operation-review',id])).out.result.status,'approved');const selected=(await f.run(['operation-status',id])).out.result.toJSON();assert.equal((selected.operation as {revision:string}).revision,'revision_two');assert.equal(f.business.effects,0);
+  }finally{await f.close();}
+});
+
+test('business uncertain conversation work fences another pending proposal until actual reconciliation',async()=>{
+  const f=await fixture(true);try{
+    await f.ok(['connect']);await f.ok(['start','--text','Please exchange']);
+    const event=(operation:typeof f.business.operation)=>({id:'event_business',type:'message',created_at:new Date().toISOString(),message:{id:'proposal_business',role:'company',author:{type:'agent'},operation}});
+    const observe=async(operation:typeof f.business.operation)=>{f.business.events=[event(operation)];const rows=(await f.run(['read','conversation1'])).out.result.toJSON().operations as {attemptId:string}[];return rows[0].attemptId;};
+    const first=await observe(f.business.operation),second=await observe({...f.business.operation,operation_id:'second_action'});assert.notEqual(first,second);
+    let answers=0;f.backend.business={async confirm(){answers++;return 'approve';},async reconcile(){return {kind:'completed',result:{actual:true}};}};
+    await f.run(['operation-review',first]);assert.equal((await f.run(['operation-retry',first])).code,6);assert.equal((await f.run(['operation-review',second])).code,6);assert.equal(answers,1);
+    assert.equal((await f.run(['operation-reconcile',first])).code,0);assert.equal((await f.run(['operation-review',second])).out.result.status,'approved');assert.equal(answers,2);
+  }finally{await f.close();}
 });

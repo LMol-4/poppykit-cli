@@ -415,3 +415,5 @@ Private business snapshots live under the existing private CLI home in
 `business.sqlite` plus action bindings in `cli.sqlite`. These are personal data,
 not a credential vault. Native credential custody is unchanged; no plaintext
 credential fallback or automatic action-record deletion is introduced.
+
+Once approved, the selected revision remains fixed when conversation history is read again, including previously unseen older pages. Previously issued valid terms remain eligible; a newer quote does not revoke them. To choose different terms before dispatch, withdraw the approval, read the desired Company proposal and collect a fresh decision. Pending consent follows newly observed revisions; historical revisions already recorded by the SDK are ignored.

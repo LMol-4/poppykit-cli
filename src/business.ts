@@ -76,6 +76,7 @@ export function createBusinessController(options: {
     if (!action || action.profileId !== profile.id || action.enrollmentRef !== profile.credentialRef || action.connectionId !== options.connectionId) throw new CliFailure('operation_binding_conflict', 5);
     return action;
   };
+  const conversationLock = (request: Extract<OperationRequest,{channel:'conversation'}>) => 'business-conversation:'+JSON.stringify([profile.id,options.connectionId,request.endpoint,request.conversationId]);
   const client = createOperationClient({
     store, context: () => {currentProfile();return auth.businessContext(options.connectionId);},
     checkTerms: options.backend?.checkTerms ?? (async () => ['The CLI cannot verify arbitrary business semantics. Compare the complete original request, summary and structured terms shown here, including price, quantity and conditions.']),
@@ -129,8 +130,18 @@ export function createBusinessController(options: {
     close: () => store.close(), inspect,
     async recover() { return Promise.all(state.list<Action>('business').filter(row => row.value.profileId === profile.id && row.value.connectionId === options.connectionId).map(async row => { try { return await inspect(row.id); } catch { return { attemptId: row.id, status: 'owner_changed' }; } })); },
     async command(command: string, id: string) {
-      await inspect(id); const release = state.claimApproval('business:' + id);
+      const action=bound(id),releaseConversation=action.request.channel==='conversation'?state.claimApproval(conversationLock(action.request)):undefined;
+      let release:(()=>void)|undefined;
       try {
+        release=state.claimApproval('business:'+id);await inspect(id);
+        if(action.request.channel==='conversation'&&['operation-review','operation-retry'].includes(command)) {
+          for(const {value:other} of state.list<Action>('business')) {
+            if(other.id!==id&&other.profileId===profile.id&&other.connectionId===options.connectionId&&other.request.channel==='conversation'&&other.request.endpoint===action.request.endpoint&&other.request.conversationId===action.request.conversationId) {
+              const uncertain=await store.transaction(other.id,slot=>slot.record?.phase==='uncertain');
+              if(uncertain)throw new CliFailure('operation_reconciliation_required',6);
+            }
+          }
+        }
         signal.throwIfAborted();
         if (command === 'operation-review') await client.requestConsent(id);
         else if (command === 'operation-resume') await client.resumeConsent(id);
@@ -151,7 +162,7 @@ export function createBusinessController(options: {
         if (signal.aborted) throw new CliFailure('canceled', 130);
         if (error instanceof OperationClientError) throw new CliFailure('operation_' + error.code, error.code === 'consent_interrupted' ? 4 : ['owner_changed', 'revision_changed'].includes(error.code) ? 5 : error.code === 'retry_later' ? 6 : 2);
         throw error;
-      } finally { release(); }
+      } finally { release?.();releaseConversation?.(); }
     },
     async api(request: Request, apiUrl: string, scopes: string[]) {
       const snapshot = await import('@poppykit/client').then(sdk => sdk.captureApiOperationRequest(request));
@@ -176,6 +187,8 @@ export function createBusinessController(options: {
       return inspect(action.id);
     },
     async conversation(request: Extract<OperationRequest, { channel: 'conversation' }>, message: unknown) {
+      const release=state.claimApproval(conversationLock(request));
+      try {
       const operation=parseBusinessOperation((message as {operation:unknown}).operation);
       for(const row of state.list<Action>('business')) {
         const action=row.value;
@@ -184,14 +197,15 @@ export function createBusinessController(options: {
         if(previous.status==='uncertain')return previous;
         if((previous.operation as BusinessOperation|undefined)?.operation_id===operation.operation_id) {
           const selected=await client.get(action.id);
-          if(previous.status!=='completed'&&!selected.previousDecisions?.some(decision=>decision.revision===operation.revision))await client.receiveConversation(action.id,request,message);
+          if(previous.status!=='completed'&&selected.phase!=='approved'&&!selected.previousDecisions?.some(decision=>decision.revision===operation.revision))await client.receiveConversation(action.id,request,message);
           return inspect(action.id);
         }
       }
       const { action } = reserve(request, await auth.businessContext(options.connectionId),undefined,[],{...request,operationId:operation.operation_id});
       await client.receiveConversation(action.id, request, message);
       state.put('business', action.id, { ...action, phase: 'operation' });
-      return inspect(action.id);
+      return await inspect(action.id);
+      } finally {release();}
     },
   };
 }
