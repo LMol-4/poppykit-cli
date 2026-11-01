@@ -11,6 +11,7 @@ import { CliFailure, openBackend, hiddenInput } from './secrets.js';
 import type { SecureBackend } from './secrets.js';
 import type { ClientAuth, HttpTransport, Connection, AuthOutcome, SignInStart } from '@poppykit/client';
 import { openApprovalBrowser, waitForApproval } from './approval.js';
+import { companyContentGuard } from './company-content.js';
 import { createBusinessController } from './business.js';
 
 export const HELP = `Usage: poppykit <command> [--json] [--profile NAME] [--unlock]
@@ -346,7 +347,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
         if(request.endpoint!==target.endpoint)fail('operation_binding_conflict',5);
         const {SqliteConversationStore}=await import('@poppykit/client/sqlite');
         const store=new SqliteConversationStore(join(home,'conversations.sqlite'));
-        try{return await sdk!.createConversationClient({connectionId,issuer:target.issuer,endpoint:target.endpoint,store,clock:{now:Date.now},operations:{client,company:found.document},authorizedRequest:r=>auth.authorizedFetch(connectionId,new Request(r,{signal:abort.signal}),target,[],context),maxAttempts:1}).read(request.conversationId,{cursor});}
+        try{return await sdk!.createConversationClient({...{validateResponse:companyContentGuard(auth)},connectionId,issuer:target.issuer,endpoint:target.endpoint,store,clock:{now:Date.now},operations:{client,company:found.document},authorizedRequest:r=>auth.authorizedFetch(connectionId,new Request(r,{signal:abort.signal}),target,[],context),maxAttempts:1}).read(request.conversationId,{cursor});}
         finally{store.close();}
       },
       async conversation(request,message,signal,context) {
@@ -356,7 +357,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
         const {SqliteConversationStore}=await import('@poppykit/client/sqlite');
         const store=new SqliteConversationStore(join(home,'conversations.sqlite'));
         try {
-          const peer=sdk!.createConversationClient({connectionId,issuer:target.issuer,endpoint:target.endpoint,store,clock:{now:Date.now},operations:{client,company:found.document},authorizedRequest:r=>auth.authorizedFetch(connectionId,r,target,[],context),maxAttempts:1});
+          const peer=sdk!.createConversationClient({...{validateResponse:companyContentGuard(auth)},connectionId,issuer:target.issuer,endpoint:target.endpoint,store,clock:{now:Date.now},operations:{client,company:found.document},authorizedRequest:r=>auth.authorizedFetch(connectionId,r,target,[],context),maxAttempts:1});
           const saved=await peer.operation(message.id);
           if(saved)await peer.retry(message.id,signal);else await peer.send(request.conversationId,message,{signal});
         } finally {store.close();}
@@ -386,7 +387,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
     if(['send','read','watch','handoff','close'].includes(command)) {const saved=state.get('conversation',pos[0]);if(!saved||JSON.stringify(saved)!==JSON.stringify(binding))fail('conversation_binding_conflict',5);}
     conversationStore = new SqliteConversationStore(join(home, 'conversations.sqlite'));
     const found = await metadata.resolveCompany(p.domain), clientMetadata = await metadata.resolveClient(p.clientId);
-    const conversation = sdk.createConversationClient({ operations:{client:clientMetadata,company:found.document}, connectionId,issuer:target.issuer,endpoint:target.endpoint,store:conversationStore,clock:{now:Date.now},authorization:(id,scopes)=>auth.authorization(id,scopes),authorizedRequest:request=>auth.authorizedFetch(connectionId,request,target),maxAttempts:1 });
+    const conversation = sdk.createConversationClient({ ...{validateResponse:companyContentGuard(auth)}, operations:{client:clientMetadata,company:found.document}, connectionId,issuer:target.issuer,endpoint:target.endpoint,store:conversationStore,clock:{now:Date.now},authorization:(id,scopes)=>auth.authorization(id,scopes),authorizedRequest:request=>auth.authorizedFetch(connectionId,request,target),maxAttempts:1 });
     const consumer=str('consumer'),key={connectionId,issuer:target.issuer,endpoint:target.endpoint};
     if(consumer&&str('cursor'))fail('consumer_and_cursor_are_exclusive');
     if(consumer&&!/^[A-Za-z0-9_-]{1,128}$/.test(consumer))fail('invalid_consumer');

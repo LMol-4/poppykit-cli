@@ -7,6 +7,7 @@ import { SqliteBusinessAttemptStore } from '@poppykit/client/sqlite';
 import { createOperationClient, createOperationSender, OperationClientError, AuthFailure, parseBusinessOperation } from '@poppykit/client';
 import type { BusinessAttempt, BusinessOperation, BusinessClientContext, ClientAuth, EventPage, OperationDelivery, OperationRequest, TrustedOperationConsent } from '@poppykit/client';
 import type { Profile, State } from './state.js';
+import { companyContentGuard } from './company-content.js';
 import { CliFailure } from './secrets.js';
 
 export type OperationReview = Parameters<TrustedOperationConsent['confirm']>[0] & {
@@ -66,6 +67,7 @@ export function createBusinessController(options: {
   conversation(request: Extract<OperationRequest, { channel: 'conversation' }>, message: import('@poppykit/client').Message, signal: AbortSignal, context: BusinessClientContext): Promise<void>;
 }): BusinessController {
   const { state, profile, auth, signal } = options;
+  const validateCompany = companyContentGuard(auth);
   const store = new SqliteBusinessAttemptStore(join(options.home, 'business.sqlite'), profile.id);
   function currentProfile() {
     const current=state.get<Profile>('profile',profile.name);
@@ -83,6 +85,7 @@ export function createBusinessController(options: {
     checkTerms: options.backend?.checkTerms ?? (async () => ['The CLI cannot verify arbitrary business semantics. Compare the complete original request, summary and structured terms shown here, including price, quantity and conditions.']),
     consent: { async confirm(input) {
       const attempt = await client.get(input.attemptId);
+      validateCompany(attempt);
       signal.throwIfAborted();
       const confirm = options.backend?.confirm ?? terminalBusinessConsent;
       let cancel!:()=>void;
@@ -105,6 +108,7 @@ export function createBusinessController(options: {
   });
   async function inspect(id: string): Promise<BusinessResult> {
     const action = bound(id), current = await auth.businessContext(options.connectionId);
+    validateCompany(action);
     if(['companyId','clientId','userId','authority'].some(key=>current[key as keyof BusinessClientContext]!==action.context[key as keyof BusinessClientContext]))throw new CliFailure('operation_owner_changed',5);
     if(action.phase!=='operation'&&action.phase!=='completed') {
       try { await client.get(id); action.phase='operation'; state.put('business',id,action); }
@@ -112,6 +116,7 @@ export function createBusinessController(options: {
     }
     if (action.phase === 'operation') {
       const attempt = await client.get(id);
+      validateCompany(attempt);
       return { attemptId: id, status: attempt.phase === 'pending_consent' ? 'operation_required' : attempt.phase, operation: attempt.operation, request: attempt.request, ...(attempt.retryAt ? { retryAt: attempt.retryAt } : {}), ...(attempt.phase === 'completed' ? { result: attempt.result } : {}), ...(attempt.withdrawalRequested ? { withdrawalRequested: true } : {}), nextAction: attempt.phase === 'pending_consent' ? 'Run operation-review in your trusted terminal. Enrollment and sign-in do not approve this action.' : attempt.phase === 'uncertain' ? 'Keep this handle. Reconcile the actual outcome; retry only this saved approval after retryAt.' : undefined };
     }
     return { attemptId: id, status: action.phase === 'completed' ? 'completed' : 'uncertain', ...(action.result ? { result: action.result.result } : {}), nextAction: action.phase === 'completed' ? undefined : 'The initial request may have taken effect. Use trusted operation-reconcile; do not create a replacement action.' };
