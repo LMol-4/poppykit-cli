@@ -5,7 +5,8 @@ and [guides](https://personalagentprotocol.org/docs/0.3/guides). Tests/snapshots
 supporting evidence. Mediated Sign-In v1 is included; Operations v2 is included. Trusted consent and business semantics are host contracts. Application business workflows belong to the host.
 Code is [MIT](LICENSE); confirm rights for third-party contributions.
 
-Use Node 24.21.0 or later within Node 24, TypeScript 5.9.3 and @types/node 24.10.0.
+Use Node 24.21.0 or later within Node 24 and the exact declared development
+dependencies (including jose, imported directly by the strict test harness).
 Install the exact client candidate tarball plus the pinned dev tools; CI reads full
 SDK SHAs/versions from .github/*-candidate.json. No sibling checkout is required.
 
