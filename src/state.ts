@@ -8,7 +8,7 @@ export class State {
     this.db = new DatabaseSync(path);
     const deadline=Date.now()+5000;
     // First-open WAL races can return BUSY immediately despite busy_timeout.
-    for(;;)try{this.db.exec('PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS cli_records(kind TEXT NOT NULL,id TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(kind,id));');break;}
+    for(;;)try{this.db.exec('PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS cli_records(kind TEXT NOT NULL,id TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(kind,id)); CREATE INDEX IF NOT EXISTS cli_record_keys ON cli_records(kind,json_extract(body,\'$.key\'));');break;}
     catch(error){if(![5,6].includes((error as {errcode?:number}).errcode??0)||Date.now()>=deadline){this.db.close();throw error;}Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,10);}
   }
   close() { this.db.close(); }
@@ -16,6 +16,8 @@ export class State {
   put(kind: string, id: string, value: unknown) { this.db.prepare('INSERT OR REPLACE INTO cli_records VALUES (?,?,?)').run(kind, id, JSON.stringify(value)); }
   remove(kind: string, id: string) { this.db.prepare('DELETE FROM cli_records WHERE kind=? AND id=?').run(kind, id); }
   list<T>(kind: string): { id: string; value: T }[] { return this.db.prepare('SELECT id,body FROM cli_records WHERE kind=? ORDER BY id LIMIT 1000').all(kind).map(row => ({ id: row.id as string, value: JSON.parse(row.body as string) })); }
+  findByKey<T>(kind: string, key: string): T | undefined { const row = this.db.prepare("SELECT body FROM cli_records WHERE kind=? AND json_extract(body,'$.key')=? LIMIT 1").get(kind,key); return row ? JSON.parse(row.body as string) : undefined; }
+  count(kind: string): number { return Number(this.db.prepare('SELECT count(*) AS count FROM cli_records WHERE kind=?').get(kind)!.count); }
   atomic<T>(action: () => T): T { this.db.exec('BEGIN IMMEDIATE'); try { const value = action(); this.db.exec('COMMIT'); return value; } catch (error) { this.db.exec('ROLLBACK'); throw error; } }
   claimApproval(id: string): () => void {
     const token = randomUUID();

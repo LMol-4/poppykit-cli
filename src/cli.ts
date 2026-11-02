@@ -36,8 +36,8 @@ Node 24 >=24.21.0 (24.x only). Direct SDK execution; no daemon. Native Windows D
   ack DELIVERY                   acknowledge a delivered consumer batch
   handoff CONVERSATION | close CONVERSATION
   api-target --api DISCOVERED_URL [--destination VERIFIED_URL]
-  api-request --api DISCOVERED_URL --destination VERIFIED_URL [--method GET] [--body-file FILE]
-  operation-list | operation-status HANDLE
+  api-request --api DISCOVERED_URL --destination VERIFIED_URL [--method GET] [--body-file FILE] [--new-action ID]
+  operation-list | operation-status HANDLE | operation-retire HANDLE
   operation-review HANDLE         trusted per-operation consent; never sends
   operation-decline HANDLE | operation-resume HANDLE
   operation-retry HANDLE | operation-reconcile HANDLE
@@ -87,9 +87,10 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
   try {
     if (!runtimeSupported(process.versions.node)) fail('node_24_21_0_required', 1);
     if (argv.length === 0 || argv.length === 1 && ['help','--help'].includes(command)) return { out: HELP, code: 0 };
-    const options = { json: { type: 'boolean' }, profile: { type: 'string' }, unlock: { type: 'boolean' }, 'no-wait': {type:'boolean'}, 'no-open': {type:'boolean'}, 'wait-timeout': {type:'string'}, provider: { type: 'string' }, enrollment: { type: 'string' }, company: { type: 'string' }, module: { type: 'string' }, scope: { type: 'string', multiple: true }, method: { type: 'string' }, connection: { type: 'string' }, 'body-file': { type: 'string' }, text: { type: 'string' }, human: { type: 'boolean' }, 'send-operation': { type: 'string' }, cursor: { type: 'string' }, consumer: { type: 'string' }, anonymous: { type: 'boolean' }, api: { type: 'string' }, destination: { type: 'string' }, 'return-to': { type: 'string' }, task: { type: 'string' }, description: { type: 'string' } } as const;
+    const options = { json: { type: 'boolean' }, profile: { type: 'string' }, unlock: { type: 'boolean' }, 'no-wait': {type:'boolean'}, 'no-open': {type:'boolean'}, 'wait-timeout': {type:'string'}, provider: { type: 'string' }, enrollment: { type: 'string' }, company: { type: 'string' }, module: { type: 'string' }, scope: { type: 'string', multiple: true }, method: { type: 'string' }, connection: { type: 'string' }, 'body-file': { type: 'string' }, 'new-action': { type: 'string' }, text: { type: 'string' }, human: { type: 'boolean' }, 'send-operation': { type: 'string' }, cursor: { type: 'string' }, consumer: { type: 'string' }, anonymous: { type: 'boolean' }, api: { type: 'string' }, destination: { type: 'string' }, 'return-to': { type: 'string' }, task: { type: 'string' }, description: { type: 'string' } } as const;
     let parsed; try { parsed = parseArgs({ args: argv.slice(1), options, allowPositionals: true }); } catch { return fail('invalid_arguments'); }
     const v = parsed.values, pos = parsed.positionals, str = (key: keyof typeof options) => v[key] as string | undefined;
+    if (v['new-action'] !== undefined && command !== 'api-request') fail('invalid_new_action');
     const need = (count: number) => { if (pos.length !== count || pos.some(x => !x || x.includes('\0'))) fail('invalid_arguments'); };
     const required = (key: keyof typeof options) => str(key) ?? fail(`required_--${key}`);
     const timeoutSeconds = Number(str('wait-timeout') ?? 300);
@@ -100,7 +101,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       if (value.browserUrl && !v['no-open']) try { await (deps.openBrowser ?? openApprovalBrowser)(value.browserUrl); } catch { deps.progress?.({notice:'Open the approval link in your browser.'}); }
     };
     const beginWait = (handle:NonNullable<typeof resume>) => { resume=handle; approvalTimer=setTimeout(()=>{approvalTimedOut=true;abort.abort();},timeoutSeconds*1000); };
-    const commands = ['setup','backend','business-backend','storage','profile','enroll','enroll-status','enroll-cancel','discovery','excluded-tasks','connect','connections','scopes','auth-start','auth-status','auth-continue','auth-wait','auth-cancel','sign-out','start','send','retry','status','retry-remove','read','watch','ack','handoff','close','api-target','api-request','operation-list','operation-status','operation-review','operation-decline','operation-resume','operation-retry','operation-reconcile','browser-join','feedback','diagnostics','enrollment-revoke'];
+    const commands = ['setup','backend','business-backend','storage','profile','enroll','enroll-status','enroll-cancel','discovery','excluded-tasks','connect','connections','scopes','auth-start','auth-status','auth-continue','auth-wait','auth-cancel','sign-out','start','send','retry','status','retry-remove','read','watch','ack','handoff','close','api-target','api-request','operation-list','operation-retire','operation-status','operation-review','operation-decline','operation-resume','operation-retry','operation-reconcile','browser-join','feedback','diagnostics','enrollment-revoke'];
     if (!commands.includes(command)) fail('unknown_command');
     const home = resolve(env.POPPYKIT_HOME ?? join(homedir(), '.poppykit'));
     const {State: StateStore}=await import('./state.js');
@@ -340,7 +341,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       const outcome=waiting?await waitForApproval(poll,{signal:abort.signal,pending:value=>value.status==='pending',timeoutMs:timeoutSeconds*1000}):await poll();
       return reply(outcome?publicOutcome(outcome):{status:'pending',resume,nextAction:'Wait ended. Run auth-wait with the saved operationId, or auth-cancel to cancel it.'});
     }
-    const businessReply = (result: any) => abort.signal.aborted ? {out:{version:1 as const,command,status:'error' as const,requestId,result,error:{code:'canceled'}},code:130} : ({ ...reply(result), code: result.status === 'completed' ? 0 : result.status === 'uncertain' ? 6 : 7 });
+    const businessReply = (result: any) => abort.signal.aborted ? {out:{version:1 as const,command,status:'error' as const,requestId,result,error:{code:'canceled'}},code:130} : ({ ...reply(result), code: ['completed','retired','pending'].includes(result.status) ? 0 : result.status === 'failed' ? 1 : result.status === 'uncertain' ? 6 : 7 });
     const openBusiness = () => business ??= createBusinessController({home,state:state!,profile:p,connectionId,auth,signal:abort.signal,backend:businessBackend??backend!.business,
       async readConversation(request,context,cursor) {
         const found=await metadata.resolveCompany(p.domain),client=await metadata.resolveClient(p.clientId!),target=await auth.target(connectionId);
@@ -376,7 +377,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       const bytes = str('body-file') ? await readFile(required('body-file')) : undefined;
       if(bytes && ['GET','HEAD'].includes(method))fail('api_body_not_allowed');
       const request = new Request(destination,{method,signal:abort.signal,...(bytes?{body:bytes,headers:{'content-type':'application/json'}}:{})});
-      return businessReply(await openBusiness().api(request,required('api'),v.scope??[]));
+      return businessReply(await openBusiness().api(request,required('api'),v.scope??[],str('new-action')));
     }
     if (command === 'browser-join') { need(0); if (!backend.browserController) fail('trusted_browser_controller_required',4); await auth.joinBrowser(connectionId,required('return-to'),backend.browserController); return reply({ joined:true }); }
     if (command === 'feedback') { need(0); const alternative = await auth.feedback(connectionId,{task:required('task'),description:required('description')}); return reply({ accepted:true, ...(alternative ? { alternative } : {}) }); }
@@ -461,6 +462,9 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       linux_secret_tool_missing: 'Install your distribution package providing /usr/bin/secret-tool (libsecret-tools on Ubuntu/Debian; libsecret on Fedora/Arch), then retry as your desktop user without sudo.',
       linux_secret_service_unavailable: 'Use your own live desktop session bus and unlock the original default Secret Service keyring, then retry without sudo. Headless/SSH sessions may lack that access. Do not delete the vault or share credentials in chat.',
       legacy_message_uncertain: 'This message predates the author contract and may already be accepted. Keep its handle and reconcile with the company history/operator before taking another action.',
+      operation_retention_limit: 'Run operation-list, then operation-retire HANDLE for terminal actions. Unresolved actions must be reconciled or explicitly declined before retirement.',
+      operation_reconciliation_required: 'Keep the existing action handle. Inspect operation-list and reconcile uncertain work before starting a deliberate new action.',
+      operation_retired: 'This action is retired and cannot execute again. Use a fresh --new-action ID only for a deliberate new mutation after resolving prior work.',
       company_unavailable: 'The company service is unavailable or paused. Ask its operator to check availability before retrying; enrollment does not need to be repeated.',
     };
     const nextAction=[hints[code],retryHandle&&code!=='legacy_message_uncertain'?'Delivery is unconfirmed. Keep this sendOperation and use retry with the same handle when ready; do not create a replacement message.':undefined].filter(Boolean).join(' ');

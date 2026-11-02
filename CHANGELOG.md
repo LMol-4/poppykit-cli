@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — remediation job 3
+
+Declare the directly imported jose harness dependency. Retry ordinary safe reads
+after transient failure or new permission without rebinding saved business approvals.
+Add durable caller-chosen `api-request --new-action ID`, fresh per-action consent,
+summary-only active listing and `operation-retire HANDLE` for terminal work.
+Retirement frees the 1,000-active-record ceiling while keeping indexed replay fences;
+unresolved work remains retained. Existing records migrate additively on open.
+Stop old writers and preserve both local databases on backup/restore. Terminal SDK
+snapshots are not purged. Publication requires the repaired SDK and normal release gates.
+
 ## 0.6.2
 
 Pin client 0.6.1 and verify against server 0.5.1, including the SDK fix for lost PostgreSQL connections. Trusted operation review and native credential custody are unchanged.

@@ -60,7 +60,17 @@ expiry, profile and authority data and requires a fresh random confirmation phra
 It never reads an approve flag, stdin or environment variable.
 
 API requests support GET/HEAD/POST/PUT/PATCH/DELETE and optional `--body-file`;
-bytes remain exact. Successful responses return
+bytes remain exact. Mutations accept caller-chosen `--new-action ID` for a deliberate
+second action; reuse that ID and exact inputs after lost responses. Changed inputs
+fail with exit 5. Unresolved work cannot be bypassed by selecting another ID.
+`operation-list` returns only `{attemptId,status}` entries for active records;
+`operation-retire HANDLE` frees a slot only for terminal records, preserving old-handle
+and identity fences. Retired status and same-identity API replay have exit 0; execution commands on
+retired handles have exit 5.
+Ordinary GET/HEAD failures are retryable (HTTP failure exit 1, permission errors
+retain authorization exits); HTTP202 reads return `pending`, exit 0. Approval-bearing
+reads retain approval/authority fencing. See [usage](docs/usage.md#business-operations).
+Successful responses return
 `{status:"completed",result:{status:HTTP_STATUS,body:BASE64}}`. Approval-required
 403 returns `{status:"operation_required",attemptId,operation,request,nextAction}`,
 exit 7. Approved, declined, withdrawn, expired and interrupted decisions retain

@@ -390,7 +390,7 @@ not model-visible stdin. A headless caller needs a locally selected trusted
 `SecureBackend.business` adapter that collects the actual user's answer; returning
 a model's claimed approval violates this contract. Keep consent outside tools.
 
-`operation-list` recovers saved actions without sending. `operation-resume HANDLE`
+`operation-list` lists active handles and statuses without sending or including request/result content. Use `operation-status HANDLE` for details. `operation-resume HANDLE`
 dismisses an interrupted consent session; `operation-review` then needs a fresh
 answer. `operation-decline` withdraws an unsent approval. After possible dispatch,
 it preserves uncertainty and suppresses retry; it cannot undo the Company effect.
@@ -404,8 +404,41 @@ HTTP202, failures and new quotes remain uncertain; wait until saved `retryAt`.
 Use `operation-reconcile HANDLE` with a trusted backend's durable business-state
 lookup. There is no model-supplied receipt or generic "mark done" switch. Without
 that adapter, reconciliation returns exit 4. Never change handles or request data
-to bypass an unresolved action. Repeating the same API request returns its saved
-business attempt; successful ordinary reads are fetched normally.
+to bypass an unresolved action. Repeating the same API mutation returns its saved
+business attempt. Ordinary GET/HEAD requests can be retried after HTTP/transport
+failure or after obtaining permission; these reads do not retain failed results.
+A saved approval proposal, including one returned to GET/HEAD, keeps its original
+handle, approval and authority.
+
+To deliberately repeat a terminal mutation, supply a fresh caller-chosen identity:
+
+```sh
+poppykit api-request --api https://company.example/schema --destination https://company.example/action --method POST --body-file request.json --new-action order-2
+```
+
+Keep `order-2` before dispatch. Repeating that ID with the exact request, API and
+scopes resumes the same saved action even if its initial response was lost; changing
+those inputs is a binding conflict. The ID is local to this profile/enrollment/
+connection, accepts 1–128 letters, digits, dots, underscores or hyphens, and is only
+valid for mutations. A new identity never copies an earlier approval: a new Company
+proposal requires fresh trusted consent. Company operation identities and execution
+deduplication still belong to the Company. No ID is generated automatically to
+escape an uncertain outcome. Uncertain/requesting work blocks new mutations on
+that connection; an identical pending/approved action also blocks deliberate
+replacement. Reconcile it or explicitly decline unsent work first.
+
+At 1,000 active actions across the local home, new reservations fail with
+`operation_retention_limit`. Run `operation-retire HANDLE` on completed, declined,
+withdrawn or recorded-expired actions to free a slot. Pending, consenting, approved,
+requesting and uncertain actions cannot be retired. Retirement keeps a minimal
+profile/enrollment/connection/key fence and an input digest: old handles and request identities cannot
+execute again, even after more than 1,000 retirements. `operation-status` returns
+`retired`; the active list omits retired entries. There is no unretire command.
+This is capacity management, not a privacy purge: terminal SDK snapshots remain in
+`business.sqlite`, and backups must retain replay fences. Do not delete either
+database or restore only one. Stop older CLI writers when upgrading; restore both
+databases from a consistent checkpoint. Existing active records remain valid and
+the key-lookup index is added automatically; no reset is needed.
 
 `read` adds `result.operations` for validated Company operation messages and
 preserves the original event JSON. `watch` saves those same proposals for

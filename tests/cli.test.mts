@@ -88,9 +88,10 @@ async function fixture(operations=false){
   const key=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);
   const metadata:MetadataResolver={resolveClient:async()=>{throw new Error('unexpected client lookup');},resolveJwks:async()=>{throw new Error('unexpected JWKS lookup');},resolveCompany:async()=>({url:'https://company.example/.well-known/poppy.json',document:doc,authorization})};
   const provider=createProvider({clientId,callbackUrl,jwksUri:'https://identity.example/jwks',clientName:'Generic',store,cipher:createResultCipher(randomBytes(32)),metadata,operations:operations?{ready:async()=>true}:undefined,signer:{kid:'key',publicJwk:()=>publicEcJwk(key.publicKey),sign:async bytes=>new Uint8Array(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},key.privateKey,new Uint8Array(bytes)))},authenticateEnrollment:async request=>request.headers.get('x-human')==='yes'?{subject:'human',allowedCompanies:['company.example']}:null});
+  const effectIds=new Set<string>();
   const sent:unknown[]=[];let loseSend=false,unavailable=false,mediated=0;
   const token=(signedIn:boolean,session='session1')=>({access_token:signedIn?'PRIVATE_ACCESS':'PRIVATE_SESSION',token_type:'Bearer',expires_in:300,scope:signedIn?'orders:read':'',...(signedIn?{refresh_token:'PRIVATE_ACCOUNT'}:{})});
-  const transport:HttpTransport={async fetch(request){const u=new URL(request.url);if(u.hostname==='identity.example')return provider.handle(request);if(u.pathname==='/.well-known/poppy.json')return Response.json(doc);if(u.pathname==='/.well-known/oauth-authorization-server/issuer')return Response.json(authorization);if(u.pathname==='/.well-known/oauth-protected-resource')return Response.json({resource:'https://company.example',authorization_servers:[issuer]});if(u.pathname.startsWith('/.well-known/oauth-protected-resource/'))return new Response(null,{status:404});if(u.pathname==='/schema')return Response.json({openapi:'3.1.0',servers:[{url:'https://company.example'}]});if(u.pathname==='/business'){const body=await request.text(),approval=request.headers.get('poppy-approval');business.requests.push({body,approval});if(!approval)return Response.json({error:'approval_required',operation:business.operation},{status:403});assert.equal(approval,'operation_id="business_action", revision="revision_one"');assert.equal(request.headers.has('idempotency-key'),false);if(business.mode==='reproposal')return Response.json({error:'approval_required',operation:{...business.operation,revision:'revision_two'}},{status:403});if(business.mode==='pending')return new Response(null,{status:202,headers:{'retry-after':'1'}});if(!business.effects)business.effects++;if(business.mode==='lost'){business.mode='normal';throw new Error('PRIVATE_REMOTE_DIAGNOSTIC');}return Response.json({password:'opaque-business-result',access_token:{amount:70}});}if(u.pathname==='/token'){const form=new URLSearchParams(await request.text());assert.ok(['authorization_code','refresh_token','urn:ietf:params:oauth:grant-type:device_code','https://personalagentprotocol.org/grant/mediated-sign-in'].includes(form.get('grant_type')??''));assert.equal(form.has('assertion'),false);assert.equal(form.has('session_id'),false);if(form.get('grant_type')==='https://personalagentprotocol.org/grant/mediated-sign-in'){mediated++;if(!form.has('sign_in_id')){assert.equal(form.get('password'),'PRIVATE_PASSWORD');return Response.json({error:'code_required',sign_in_id:'challenge1',sent_to:'email',expires_in:600},{status:400});}assert.equal(form.get('one_time_code'),'PRIVATE_OTP');assert.equal(form.has('password'),false);}return Response.json(token(true));}if(u.pathname==='/device')return Response.json({device_code:'PRIVATE_DEVICE',user_code:'USER-CODE',verification_uri:'https://company.example/verify',expires_in:600,interval:1});if(u.pathname.startsWith('/mediated')){mediated++;const body=await request.json();if(mediated===1){assert.equal(body.credentials.password,'PRIVATE_PASSWORD');return Response.json({status:'code_required',sign_in_id:'challenge1',code:{sent_to:'email'},expires_at:new Date(Date.now()+600000).toISOString()});}assert.equal(body.code,'PRIVATE_OTP');return Response.json({status:'complete',...token(true)});}if(u.pathname==='/revoke')return new Response(null,{status:200});if(u.pathname.startsWith('/conversations')){if(request.method==='POST'){sent.push(await request.json());if(unavailable)return Response.json({error:'PRIVATE_REMOTE_BODY'},{status:503});if(loseSend){loseSend=false;throw new Error('PRIVATE_FAILURE');}return Response.json({conversation_id:'conversation1',status:'idle',responder:'agent'});}return Response.json({conversation_id:'conversation1',status:'idle',responder:'agent',events:business.events,cursor:business.events.length?'event_business':null,has_more:false});}throw new Error('unexpected fixture destination '+request.url);}};
+  const transport:HttpTransport={async fetch(request){const u=new URL(request.url);if(u.hostname==='identity.example')return provider.handle(request);if(u.pathname==='/.well-known/poppy.json')return Response.json(doc);if(u.pathname==='/.well-known/oauth-authorization-server/issuer')return Response.json(authorization);if(u.pathname==='/.well-known/oauth-protected-resource')return Response.json({resource:'https://company.example',authorization_servers:[issuer]});if(u.pathname.startsWith('/.well-known/oauth-protected-resource/'))return new Response(null,{status:404});if(u.pathname==='/schema')return Response.json({openapi:'3.1.0',servers:[{url:'https://company.example'}]});if(u.pathname==='/business'){const body=await request.text(),approval=request.headers.get('poppy-approval');business.requests.push({body,approval});if(!approval)return Response.json({error:'approval_required',operation:business.operation},{status:403});assert.equal(approval,`operation_id="${business.operation.operation_id}", revision="${business.operation.revision}"`);assert.equal(request.headers.has('idempotency-key'),false);if(business.mode==='reproposal')return Response.json({error:'approval_required',operation:{...business.operation,revision:'revision_two'}},{status:403});if(business.mode==='pending')return new Response(null,{status:202,headers:{'retry-after':'1'}});if(!effectIds.has(approval)){effectIds.add(approval);business.effects++;}if(business.mode==='lost'){business.mode='normal';throw new Error('PRIVATE_REMOTE_DIAGNOSTIC');}return Response.json({password:'opaque-business-result',access_token:{amount:70}});}if(u.pathname==='/token'){const form=new URLSearchParams(await request.text());assert.ok(['authorization_code','refresh_token','urn:ietf:params:oauth:grant-type:device_code','https://personalagentprotocol.org/grant/mediated-sign-in'].includes(form.get('grant_type')??''));assert.equal(form.has('assertion'),false);assert.equal(form.has('session_id'),false);if(form.get('grant_type')==='https://personalagentprotocol.org/grant/mediated-sign-in'){mediated++;if(!form.has('sign_in_id')){assert.equal(form.get('password'),'PRIVATE_PASSWORD');return Response.json({error:'code_required',sign_in_id:'challenge1',sent_to:'email',expires_in:600},{status:400});}assert.equal(form.get('one_time_code'),'PRIVATE_OTP');assert.equal(form.has('password'),false);}return Response.json(token(true));}if(u.pathname==='/device')return Response.json({device_code:'PRIVATE_DEVICE',user_code:'USER-CODE',verification_uri:'https://company.example/verify',expires_in:600,interval:1});if(u.pathname.startsWith('/mediated')){mediated++;const body=await request.json();if(mediated===1){assert.equal(body.credentials.password,'PRIVATE_PASSWORD');return Response.json({status:'code_required',sign_in_id:'challenge1',code:{sent_to:'email'},expires_at:new Date(Date.now()+600000).toISOString()});}assert.equal(body.code,'PRIVATE_OTP');return Response.json({status:'complete',...token(true)});}if(u.pathname==='/revoke')return new Response(null,{status:200});if(u.pathname.startsWith('/conversations')){if(request.method==='POST'){sent.push(await request.json());if(unavailable)return Response.json({error:'PRIVATE_REMOTE_BODY'},{status:503});if(loseSend){loseSend=false;throw new Error('PRIVATE_FAILURE');}return Response.json({conversation_id:'conversation1',status:'idle',responder:'agent'});}return Response.json({conversation_id:'conversation1',status:'idle',responder:'agent',events:business.events,cursor:business.events.length?'event_business':null,has_more:false});}throw new Error('unexpected fixture destination '+request.url);}};
   const run=async (args:string[],sdk?:typeof import('@poppykit/client'))=>{const r=await main([...args,'--no-wait','--json'],{POPPYKIT_HOME:home},{backend,transport,sdk});return {...r,out:reply(r.out)};};
   const ok=async (args:string[])=>{const result=await run(args);assert.equal(result.code,0,JSON.stringify(result.out));assert.equal(typeof result.out,'object');return result.out.result;};
   await ok(['setup','--provider','https://identity.example/v1','--company','company.example']);await ok(['enroll']);
@@ -710,5 +711,163 @@ test('authority changed immediately before receipt read reports a binding confli
     const {SqliteBusinessAttemptStore}=await import('@poppykit/client/sqlite');
     const state=new State(join(f.home,'cli.sqlite')),store=new SqliteBusinessAttemptStore(join(f.home,'business.sqlite'),state.profile().id);
     try{assert.equal(await store.transaction(id,slot=>slot.record?.phase),'uncertain');}finally{store.close();state.close();}
+  }finally{await f.close();}
+});
+
+test('safe API reads recover after HTTP/transport failures, including retained legacy reads',async()=>{
+  for(const method of ['GET','HEAD']){
+    const f=await fixture(true);try{
+      await f.ok(['connect']);const fetch=f.transport.fetch;let calls=0,fail=true,legacy:unknown;
+      f.transport.fetch=async(request,options)=>{
+        if(new URL(request.url).pathname!=='/safe-read')return fetch(request,options);
+        calls++;const state=new State(join(f.home,'cli.sqlite'));try{legacy??=state.list('business')[0]?.value;}finally{state.close();}
+        if(fail&&calls===1)return new Response(null,{status:503});
+        if(fail)throw new Error('PRIVATE_TRANSIENT_READ');
+        return new Response(null,{status:200});
+      };
+      const args=['api-request','--api','https://company.example/schema','--destination','https://company.example/safe-read','--method',method];
+      assert.equal((await f.run(args)).code,1);assert.equal((await f.run(args)).code,1);
+      const state=new State(join(f.home,'cli.sqlite'));try{assert.equal(state.count('business'),0);const saved=legacy as {id:string;phase:string};state.put('business',saved.id,{...saved,phase:'uncertain'});}finally{state.close();}
+      fail=false;const result=await f.run(args);assert.equal(result.code,0,JSON.stringify(result));assert.equal(result.out.result.status,'completed');assert.equal(calls,3);
+      assert.equal((await f.run(args)).code,0);assert.equal(calls,4);
+    }finally{await f.close();}
+  }
+});
+
+test('safe API read can use newly granted permission while approval-bearing reads keep their authority',async()=>{
+  const f=await fixture(true);try{
+    await f.ok(['connect']);let calls=0;const fetch=f.transport.fetch;
+    f.transport.fetch=async(request,options)=>new URL(request.url).pathname==='/scoped-read'?(calls++,Response.json({allowed:true})):fetch(request,options);
+    const args=['api-request','--api','https://company.example/schema','--destination','https://company.example/scoped-read','--scope','orders:read'];
+    assert.notEqual((await f.run(args)).code,0);assert.equal(calls,0);
+    const proposal=String((await f.run(['api-request','--api','https://company.example/schema','--destination','https://company.example/business'])).out.result.toJSON().attemptId);
+    const signIn=await f.ok(['auth-start','--method','mediated','--scope','orders:read']);await f.ok(['auth-continue',signIn.outcome.operationId]);
+    assert.equal((await f.run(args)).code,0);assert.equal(calls,1);
+    const saved=await f.run(['api-request','--api','https://company.example/schema','--destination','https://company.example/business']);
+    assert.equal(saved.code,5);assert.equal(saved.out.error.code,'operation_owner_changed');assert.equal(f.business.requests.length,1);
+    assert.equal((await f.run(['operation-retry',proposal])).code,5);
+  }finally{await f.close();}
+});
+
+test('deliberate identical mutations use durable new identities, fresh consent and terminal retirement fences',async()=>{
+  const f=await fixture(true);try{
+    await f.ok(['connect']);const file=join(f.home,'action.json');await writeFile(file,'{"quantity":1}');
+    const args=['api-request','--api','https://company.example/schema','--destination','https://company.example/business','--method','POST','--body-file',file];
+    const first=String((await f.run(args)).out.result.toJSON().attemptId);
+    assert.equal((await f.run([...args,'--new-action','second'])).code,6,'pending identical work cannot be replaced');
+    assert.equal((await f.run(['operation-retire',first])).code,5);
+    let reviews=0;f.backend.business={async confirm(){reviews++;return 'approve';}};
+    await f.run(['operation-review',first]);assert.equal((await f.run(['operation-retire',first])).code,5);
+    f.business.mode='lost';assert.equal((await f.run(['operation-retry',first])).code,6);assert.equal(f.business.effects,1);
+    assert.equal((await f.run(args)).out.result.toJSON().attemptId,first);
+    assert.equal((await f.run([...args,'--new-action','second'])).code,6);
+    assert.equal((await f.run(['operation-retire',first])).code,6);
+    f.backend.business.reconcile=async input=>{assert.equal(input.attempt?.operation.operation_id,'business_action');assert.equal(input.attempt?.operation.revision,'revision_one');return {kind:'completed',result:{actualReceipt:true}};};
+    assert.equal((await f.run(['operation-reconcile',first])).code,0);
+    f.business.operation={...f.business.operation,operation_id:'business_second'};
+    const second=String((await f.run([...args,'--new-action','second'])).out.result.toJSON().attemptId);assert.notEqual(first,second);
+    assert.equal((await f.run([...args,'--new-action','second'])).out.result.toJSON().attemptId,second);assert.equal(f.business.requests.length,3);
+    await writeFile(file,'{"quantity":2}');assert.equal((await f.run([...args,'--new-action','second'])).code,5);await writeFile(file,'{"quantity":1}');
+    assert.equal((await f.run(['operation-retry',second])).code,2);
+    await f.run(['operation-review',second]);assert.equal((await f.run(['operation-retry',second])).code,0);assert.equal(reviews,2);assert.equal(f.business.effects,2);
+    const list=(await f.run(['operation-list'])).out.result.toJSON().attempts as Record<string,unknown>[];
+    assert.deepEqual(list.map(row=>Object.keys(row).sort()),[['attemptId','status'],['attemptId','status']]);
+    for(const id of [first,second]){
+      const retired=await f.run(['operation-retire',id]);assert.equal(retired.code,0);assert.equal(retired.out.result.status,'retired');assert.equal((await f.run(['operation-retire',id])).code,0);
+      assert.deepEqual((await f.run(['operation-status',id])).out.result.toJSON(),{attemptId:id,status:'retired'});
+      for(const command of ['operation-review','operation-retry','operation-reconcile','operation-resume'])assert.equal((await f.run([command,id])).code,5);
+    }
+    assert.equal((await f.run(args)).out.result.status,'retired');
+    assert.equal((await f.run([...args,'--new-action','second'])).out.result.status,'retired');
+    await writeFile(file,'{"quantity":2}');assert.equal((await f.run([...args,'--new-action','second'])).out.error.code,'operation_binding_conflict');await writeFile(file,'{"quantity":1}');
+    assert.equal((await f.run([...args,'--new-action','second','--scope','orders:read'])).out.error.code,'operation_binding_conflict');
+    assert.deepEqual((await f.run(['operation-list'])).out.result.toJSON().attempts,[]);assert.equal(f.business.requests.length,4);
+    assert.equal((await f.run([...args,'--new-action','../invalid'])).code,2);
+    assert.equal((await f.run(['api-request','--api','https://company.example/schema','--destination','https://company.example/business','--new-action','read'])).code,2);
+    assert.equal((await f.run(['operation-list','--new-action','wrong-command'])).code,2);
+  }finally{await f.close();}
+});
+
+test('an ambiguous initial mutation cannot become a deliberate replacement and concurrent identities cannot duplicate it',async()=>{
+  const f=await fixture(true);try{
+    await f.ok(['connect']);const fetch=f.transport.fetch;let calls=0,entered!:()=>void,release!:()=>void;
+    const ready=new Promise<void>(resolve=>entered=resolve),gate=new Promise<void>(resolve=>release=resolve);
+    f.transport.fetch=async(request,options)=>{
+      if(new URL(request.url).pathname!=='/effect')return fetch(request,options);
+      calls++;entered();await gate;throw new Error('PRIVATE_LOST_MUTATION');
+    };
+    const args=['api-request','--api','https://company.example/schema','--destination','https://company.example/effect','--method','POST','--new-action','first'];
+    const sending=f.run(args);await ready;
+    assert.equal((await f.run([...args.slice(0,-1),'replacement'])).code,6);
+    release();const initial=await sending,id=String(initial.out.result.toJSON().attemptId);assert.equal(initial.code,6);
+    assert.equal((await f.run(args)).out.result.toJSON().attemptId,id);assert.equal((await f.run(['operation-retire',id])).code,6);
+    assert.equal((await f.run([...args.slice(0,-1),'replacement'])).code,6);assert.equal(calls,1);
+    f.backend.business={async confirm(){throw new Error('unused');},async reconcile(){return {kind:'completed',result:{actualReceipt:true}};}};
+    assert.equal((await f.run(['operation-reconcile',id])).code,0);assert.equal((await f.run(['operation-retire',id])).code,0);
+  }finally{await f.close();}
+});
+
+test('retirement frees the active capacity boundary and replay lookup survives more than 1000 tombstones',async()=>{
+  const f=await fixture(true);try{
+    await f.ok(['connect']);const fetch=f.transport.fetch;let calls=0;
+    f.transport.fetch=async(request,options)=>new URL(request.url).pathname==='/capacity'?(calls++,Response.json({done:true})):fetch(request,options);
+    const args=['api-request','--api','https://company.example/schema','--destination','https://company.example/capacity','--method','POST'];
+    const id=String((await f.run(args)).out.result.toJSON().attemptId);
+    const state=new State(join(f.home,'cli.sqlite'));try{
+      const row=state.get<Record<string,unknown>>('business',id)!;
+      state.atomic(()=>{for(let i=0;i<999;i++)state.put('business','capacity_'+i,{...row,id:'capacity_'+i,key:'capacity_'+i});});
+      assert.equal(state.count('business'),1000);
+    }finally{state.close();}
+    assert.equal((await f.run([...args,'--new-action','over-capacity'])).out.error.code,'operation_retention_limit');assert.equal(calls,1);
+    assert.equal((await f.run(['operation-list'])).out.result.toJSON().attempts && ((await f.run(['operation-list'])).out.result.toJSON().attempts as unknown[]).length,1000);
+    assert.equal((await f.run(['operation-retire',id])).code,0);
+    const after=new State(join(f.home,'cli.sqlite'));try{
+      const retired=after.get<Record<string,unknown>>('business-retired',id)!;
+      assert.equal('request' in retired,false);assert.equal('result' in retired,false);
+      after.atomic(()=>{for(let i=0;i<1001;i++)after.put('business-retired','aaa_'+i,{...retired,id:'aaa_'+i,key:'retired_'+i});});
+      assert.equal(after.count('business'),999);assert.equal(after.count('business-retired'),1002);
+    }finally{after.close();}
+    assert.equal((await f.run(args)).out.result.status,'retired');assert.equal((await f.run(['operation-retry',id])).code,5);assert.equal(calls,1);
+    assert.equal((await f.run([...args,'--new-action','after-retirement'])).code,0);assert.equal(calls,2);
+  }finally{await f.close();}
+});
+
+test('retired conversation proposals stay retired on history replay; unsent terminal decisions can retire',async()=>{
+  for(const decision of ['declined','withdrawn','expired']){
+    const f=await fixture(true);try{
+      await f.ok(['connect']);await f.ok(['start','--text','Please exchange']);
+      if(decision==='expired')f.business.operation.expires_at=new Date(Date.now()-1000).toISOString();
+      const event=(operation:typeof f.business.operation)=>({id:'event_business',type:'message',created_at:new Date().toISOString(),message:{id:'proposal_business',role:'company',author:{type:'agent'},operation}});
+      f.business.events=[event(f.business.operation)];
+      const id=((await f.run(['read','conversation1'])).out.result.toJSON().operations as {attemptId:string}[])[0].attemptId;
+      f.backend.business={async confirm(){return 'decline';}};
+      if(decision==='declined')assert.equal((await f.run(['operation-review',id])).out.result.status,'declined');
+      if(decision==='withdrawn')assert.equal((await f.run(['operation-decline',id])).out.result.status,'withdrawn');
+      assert.equal((await f.run(['operation-retire',id])).code,0);
+      const replay=await f.run(['read','conversation1']);assert.equal(replay.code,0);
+      assert.deepEqual(replay.out.result.toJSON().operations,[{attemptId:id,status:'retired'}]);
+      assert.equal((await f.run(['operation-retry',id])).code,5);assert.equal(f.sent.length,1);assert.equal(f.business.effects,0);
+      f.business.events=[event({...f.business.operation,operation_id:'next_proposal',expires_at:new Date(Date.now()+60000).toISOString()})];
+      const next=(await f.run(['read','conversation1'])).out.result.toJSON().operations as {attemptId:string;status:string}[];
+      assert.notEqual(next[0].attemptId,id);assert.equal(next[0].status,'operation_required');
+    }finally{await f.close();}
+  }
+});
+
+test('retirement cannot be undone by a delayed status recovery of a terminal SDK receipt',async()=>{
+  const f=await fixture(true);try{
+    await f.ok(['connect']);const args=['api-request','--api','https://company.example/schema','--destination','https://company.example/business','--method','POST'];
+    const id=String((await f.run(args)).out.result.toJSON().attemptId);
+    f.backend.business={async confirm(){return 'approve';}};await f.run(['operation-review',id]);await f.run(['operation-retry',id]);
+    const state=new State(join(f.home,'cli.sqlite'));try{state.put('business',id,{...state.get<Record<string,unknown>>('business',id),phase:'uncertain'});}finally{state.close();}
+    const sdk=await import('@poppykit/client');let entered!:()=>void,release!:()=>void;
+    const ready=new Promise<void>(resolve=>entered=resolve),gate=new Promise<void>(resolve=>release=resolve);
+    const held={...sdk,createClientAuth(options:Parameters<typeof sdk.createClientAuth>[0]){
+      const auth=sdk.createClientAuth(options);let first=true;return {...auth,async businessContext(connectionId:string){if(first){first=false;entered();await gate;}return auth.businessContext(connectionId);}};
+    }};
+    const status=f.run(['operation-status',id],held);await ready;
+    assert.equal((await f.run(['operation-retire',id])).code,0);release();await status;
+    const after=new State(join(f.home,'cli.sqlite'));try{assert.equal(after.get('business',id),undefined,'delayed status must not resurrect an active record');assert.ok(after.get('business-retired',id));}finally{after.close();}
+    assert.equal((await f.run(['operation-retry',id])).code,5);assert.equal(f.business.effects,1);
   }finally{await f.close();}
 });

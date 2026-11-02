@@ -51,13 +51,18 @@ interface Action {
   context: BusinessClientContext;
   phase: 'requesting' | 'operation' | 'uncertain' | 'completed'; result?: OperationDelivery & { kind: 'completed' };
 }
+interface RetiredAction {
+  phase: 'retired'; id: string; key: string; profileId: string; enrollmentRef?: string; connectionId: string; fingerprint: string;
+}
+const terminalPhases = ['completed', 'declined', 'withdrawn', 'expired'];
+const fingerprint = (request: OperationRequest, apiUrl?: string, scopes: string[] = []) => createHash('sha256').update(JSON.stringify({request,apiUrl,scopes})).digest('hex');
 type BusinessResult = { attemptId: string; status: string; [key: string]: unknown };
 export interface BusinessController {
   close(): void;
   inspect(id: string): Promise<BusinessResult>;
   recover(): Promise<BusinessResult[]>;
   command(command: string, id: string): Promise<BusinessResult>;
-  api(request: Request, apiUrl: string, scopes: string[]): Promise<BusinessResult>;
+  api(request: Request, apiUrl: string, scopes: string[], newAction?: string): Promise<BusinessResult>;
   conversation(request: Extract<OperationRequest, { channel: 'conversation' }>, message: unknown): Promise<BusinessResult>;
 }
 export function createBusinessController(options: {
@@ -73,11 +78,15 @@ export function createBusinessController(options: {
     const current=state.get<Profile>('profile',profile.name);
     if(!current||current.id!==profile.id||current.credentialRef!==profile.credentialRef||current.clientId!==profile.clientId||current.installationId!==profile.installationId)throw new CliFailure('operation_binding_conflict',5);
   }
-  const bound = (id: string): Action => {
+  function binding(action: Action | RetiredAction | undefined) {
     currentProfile();
-    const action = state.get<Action>('business', id);
     if (!action || action.profileId !== profile.id || action.enrollmentRef !== profile.credentialRef || action.connectionId !== options.connectionId) throw new CliFailure('operation_binding_conflict', 5);
-    return action;
+  }
+  const bound = (id: string): Action => {
+    if (state.get('business-retired',id)) throw new CliFailure('operation_retired',5);
+    const action = state.get<Action>('business', id);
+    binding(action);
+    return action!;
   };
   const conversationLock = (request: Extract<OperationRequest,{channel:'conversation'}>) => 'business-conversation:'+JSON.stringify([profile.id,options.connectionId,request.endpoint,request.conversationId]);
   const client = createOperationClient({
@@ -107,11 +116,13 @@ export function createBusinessController(options: {
     },
   });
   async function inspect(id: string): Promise<BusinessResult> {
+    const retired = state.get<RetiredAction>('business-retired',id);
+    if (retired) { binding(retired); return {attemptId:id,status:'retired'}; }
     const action = bound(id), current = await auth.businessContext(options.connectionId);
     validateCompany(action);
     if(['companyId','clientId','userId','authority'].some(key=>current[key as keyof BusinessClientContext]!==action.context[key as keyof BusinessClientContext]))throw new CliFailure('operation_owner_changed',5);
     if(action.phase!=='operation'&&action.phase!=='completed') {
-      try { await client.get(id); action.phase='operation'; state.put('business',id,action); }
+      try { await client.get(id); action.phase='operation'; state.atomic(()=>{bound(id);state.put('business',id,action);}); }
       catch(error) { if(!(error instanceof OperationClientError)||error.code!=='unknown_attempt')throw error; }
     }
     if (action.phase === 'operation') {
@@ -121,21 +132,43 @@ export function createBusinessController(options: {
     }
     return { attemptId: id, status: action.phase === 'completed' ? 'completed' : 'uncertain', ...(action.result ? { result: action.result.result } : {}), nextAction: action.phase === 'completed' ? undefined : 'The initial request may have taken effect. Use trusted operation-reconcile; do not create a replacement action.' };
   }
-  function reserve(request: OperationRequest, context: BusinessClientContext, apiUrl?: string, scopes: string[] = [], identity: unknown = request): { action: Action; existing: boolean } {
-    return state.atomic(() => {
-      // shortcut: identical API snapshots share one retained action; add a trusted new-action flow when repetition is required.
+  async function reserve(request: OperationRequest, context: BusinessClientContext, apiUrl?: string, scopes: string[] = [], identity: unknown = request, deliberate = false): Promise<{ action: Action | RetiredAction; existing: boolean }> {
+    const release = state.claimApproval('business-reserve:'+profile.id+':'+options.connectionId);
+    try {
+      currentProfile();
       const key = createHash('sha256').update(JSON.stringify({ profileId: profile.id, enrollmentRef: profile.credentialRef, connectionId: options.connectionId, request:identity })).digest('hex');
-      const old = state.list<Action>('business').find(row => row.value.key === key)?.value;
-      if (old) return { action: bound(old.id), existing: true };
-      if (state.list('business').length >= 1000) throw new CliFailure('operation_retention_limit', 5);
-      const action: Action = { id: 'business_' + randomUUID().replaceAll('-', ''), key, profileId: profile.id, enrollmentRef: profile.credentialRef, connectionId: options.connectionId, request, apiUrl, scopes, context, phase: 'requesting' };
-      state.put('business', action.id, action); return { action, existing: false };
-    });
+      const retired = state.findByKey<RetiredAction>('business-retired',key);
+      if (retired) {
+        binding(retired);
+        if (deliberate && retired.fingerprint!==fingerprint(request,apiUrl,scopes)) throw new CliFailure('operation_binding_conflict',5);
+        return {action:retired,existing:true};
+      }
+      const old = state.findByKey<Action>('business',key);
+      if (old) {
+        if (deliberate && fingerprint(old.request,old.apiUrl,old.scopes)!==fingerprint(request,apiUrl,scopes)) throw new CliFailure('operation_binding_conflict',5);
+        return {action:bound(old.id),existing:true};
+      }
+      const mutation = request.channel !== 'api' || !['GET','HEAD'].includes(request.method);
+      if (mutation || deliberate) {
+        for (const {value:other} of state.list<Action>('business')) {
+          if (other.profileId!==profile.id || other.connectionId!==options.connectionId) continue;
+          const phase = await store.transaction(other.id,slot=>slot.record?.phase) ?? other.phase;
+          const same = fingerprint(other.request,other.apiUrl,other.scopes)===fingerprint(request,apiUrl,scopes);
+          if (phase==='uncertain' || phase==='requesting' || (deliberate && same && !terminalPhases.includes(phase))) throw new CliFailure('operation_reconciliation_required',6);
+        }
+      }
+      return state.atomic(() => {
+        if (state.count('business') >= 1000) throw new CliFailure('operation_retention_limit', 5);
+        const action: Action = { id: 'business_' + randomUUID().replaceAll('-', ''), key, profileId: profile.id, enrollmentRef: profile.credentialRef, connectionId: options.connectionId, request, apiUrl, scopes, context, phase: 'requesting' };
+        state.put('business', action.id, action); return { action, existing: false };
+      });
+    } finally { release(); }
   }
   return {
     close: () => store.close(), inspect,
-    async recover() { return Promise.all(state.list<Action>('business').filter(row => row.value.profileId === profile.id && row.value.connectionId === options.connectionId).map(async row => { try { return await inspect(row.id); } catch { return { attemptId: row.id, status: 'owner_changed' }; } })); },
+    async recover() { return Promise.all(state.list<Action>('business').filter(row => row.value.profileId === profile.id && row.value.connectionId === options.connectionId).map(async row => { try { const result=await inspect(row.id);return {attemptId:row.id,status:result.status}; } catch { return { attemptId: row.id, status: 'owner_changed' }; } })); },
     async command(command: string, id: string) {
+      if (command==='operation-retire' && state.get('business-retired',id)) return inspect(id);
       const action=bound(id),releaseConversation=action.request.channel==='conversation'?state.claimApproval(conversationLock(action.request)):undefined;
       let release:(()=>void)|undefined;
       try {
@@ -149,7 +182,16 @@ export function createBusinessController(options: {
           }
         }
         signal.throwIfAborted();
-        if (command === 'operation-review') await client.requestConsent(id);
+        if (command === 'operation-retire') {
+          const phase = await store.transaction(id,slot=>slot.record?.phase) ?? bound(id).phase;
+          if (!terminalPhases.includes(phase)) throw new CliFailure('operation_not_terminal',phase==='uncertain'||phase==='requesting'?6:5);
+          state.atomic(() => {
+            const saved=bound(id);
+            state.put('business-retired',id,{phase:'retired',id,key:saved.key,profileId:saved.profileId,enrollmentRef:saved.enrollmentRef,connectionId:saved.connectionId,fingerprint:fingerprint(saved.request,saved.apiUrl,saved.scopes)} satisfies RetiredAction);
+            state.remove('business',id);
+          });
+        }
+        else if (command === 'operation-review') await client.requestConsent(id);
         else if (command === 'operation-resume') await client.resumeConsent(id);
         else if (command === 'operation-decline') await client.withdraw(id);
         else if (command === 'operation-retry') await client.retry(id);
@@ -173,12 +215,23 @@ export function createBusinessController(options: {
         throw error;
       } finally { release?.();releaseConversation?.(); }
     },
-    async api(request: Request, apiUrl: string, scopes: string[]) {
+    async api(request: Request, apiUrl: string, scopes: string[], newAction?: string) {
+      const safeRead = ['GET','HEAD'].includes(request.method);
+      if (newAction !== undefined && (safeRead || !/^[A-Za-z0-9._-]{1,128}$/.test(newAction))) throw new CliFailure('invalid_new_action',2);
       const snapshot = await import('@poppykit/client').then(sdk => sdk.captureApiOperationRequest(request));
-      const { action, existing } = reserve(snapshot, await auth.businessContext(options.connectionId), apiUrl, scopes);
-      if (existing) return inspect(action.id);
+      const current = await auth.businessContext(options.connectionId);
+      let { action, existing } = await reserve(snapshot, current, apiUrl, scopes, newAction === undefined ? snapshot : {newAction}, newAction !== undefined);
+      if (action.phase==='retired') return inspect(action.id);
+      if (existing && !safeRead) return inspect(action.id);
       const release = state.claimApproval('business:' + action.id);
       try {
+        if (existing) {
+          const proposal = await store.transaction(action.id,slot=>!!slot.record);
+          if (proposal || action.phase==='operation' || action.phase==='completed') return await inspect(action.id);
+          // Ordinary safe reads can use newly granted authority; approval-bearing work cannot.
+          action = {...action,context:current,apiUrl,scopes};
+          state.put('business',action.id,action);
+        }
         const target = await auth.apiTarget(options.connectionId, apiUrl, request.url);
         const response = await auth.apiFetch(options.connectionId, request.clone(), target, scopes, action.context);
         if (response.status === 403 && (await response.clone().json().catch(() => null))?.error === 'approval_required') {
@@ -187,10 +240,14 @@ export function createBusinessController(options: {
         } else {
           const result = { status: response.status, body: Buffer.from(await response.arrayBuffer()).toString('base64') };
           const completed=response.ok&&response.status!==202;
-          if(completed&&['GET','HEAD'].includes(request.method)) { state.remove('business',action.id);return {attemptId:action.id,status:'completed',result}; }
+          if (safeRead) {
+            state.remove('business',action.id);
+            return {attemptId:action.id,status:completed?'completed':response.status===202?'pending':'failed',result};
+          }
           state.put('business', action.id, { ...action, phase: completed ? 'completed' : 'uncertain', ...(completed?{result:{kind:'completed',result}}:{}) });
         }
-      } catch {
+      } catch (error) {
+        if (safeRead && !await store.transaction(action.id,slot=>!!slot.record)) { state.remove('business',action.id); throw error; }
         state.put('business', action.id, { ...action, phase: 'uncertain' });
       } finally { release(); }
       return inspect(action.id);
@@ -210,7 +267,8 @@ export function createBusinessController(options: {
           return inspect(action.id);
         }
       }
-      const { action } = reserve(request, await auth.businessContext(options.connectionId),undefined,[],{...request,operationId:operation.operation_id});
+      const { action } = await reserve(request, await auth.businessContext(options.connectionId),undefined,[],{...request,operationId:operation.operation_id});
+      if (action.phase==='retired') return inspect(action.id);
       await client.receiveConversation(action.id, request, message);
       state.put('business', action.id, { ...action, phase: 'operation' });
       return await inspect(action.id);
