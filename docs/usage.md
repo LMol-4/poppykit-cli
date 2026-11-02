@@ -36,8 +36,8 @@ separately configured backend. Export/retain needed records before manual reset.
 
 ## Secure storage and trusted input
 
-This document describes version 0.5.0. Check the published version
-and installed help before using its new native-storage or migration commands.
+This document describes version 0.6.3. Check the installed help for the exact
+commands supported by your installation.
 
 Linux uses the standard Secret Service through `/usr/bin/secret-tool` and the
 user's unlocked persistent desktop keyring. See [Linux](linux.md) for distro
@@ -49,7 +49,7 @@ files have user-only ACLs, verified on every access. Missing user profile/DPAPI,
 unsafe ACLs, reparse points or tampered files fail closed. DPAPI protects storage
 at rest; arbitrary code running as the same Windows user can decrypt it.
 
-CLI 0.5.0 automatically uses the default macOS Keychain to protect a random
+The CLI automatically uses the default macOS Keychain to protect a random
 wrapping key for the AES-256-GCM local ciphertext vault. The bundled universal
 arm64/x86_64 Security.framework helper receives secrets through private pipes;
 no compiler, Xcode, daemon, per-command passphrase or visitor-written adapter is
@@ -327,7 +327,7 @@ A public setup prompt contains only these four fields (use an actual published
 or locally supplied candidate version):
 
 ```text
-Package: @poppykit/cli@0.6.0 (verify publication before registry install)
+Package: @poppykit/cli@0.6.3 (verify publication before registry install)
 Provider: https://identity.example/v1
 Company: company.example
 Task: Ask about the available services.
@@ -338,7 +338,7 @@ and Linux. Its generic HTTP tunnel does not certify production TLS, a native
 keyring, physical terminal, KMS or browser engine. Every new artifact requires
 its own [release verification](../RELEASING.md); old results do not certify new bytes.
 
-## Unreleased draft 0.3 cutover
+## Draft 0.3 storage and wire changes
 
 Outgoing messages use `author.type`; `--human` marks exact human text and otherwise
 the author is `agent`. Retries reuse the SDK's stored request, ID and target.
@@ -346,7 +346,7 @@ This is a breaking change without backward compatibility. Stop old writers befor
 reconcile it before discarding its handle, and never create a replacement message
 to bypass uncertainty.
 
-### Draft 0.3 integration checkpoint
+### Supported integration boundaries
 
 `feedback --task TASK --description TEXT` returns `{accepted:true}` for empty
 202, or also `alternative` for a validated 200 response. Instructions/references are

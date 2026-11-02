@@ -1,10 +1,14 @@
 # Changelog
 
-## Unreleased — remediation job 4
+## 0.6.3 — 2026-11-02
+
+Pin released client 0.6.3 and verify against server 0.5.3, including credential reflection guards and same-account consent continuity.
+
+### Approval comparison
 
 - Display exact structured requested/proposed term comparisons with explicit limitations before trusted consent.
 
-## Unreleased — remediation job 3
+### Retry and action lifecycle
 
 Declare the directly imported jose harness dependency. Retry ordinary safe reads
 after transient failure or new permission without rebinding saved business approvals.

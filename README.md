@@ -6,7 +6,7 @@ Discover companies, authenticate, exchange conversations and review business ope
 ## Install
 
 ```sh
-npm install --global @poppykit/cli@0.6.0
+npm install --global @poppykit/cli@0.6.3
 ```
 
 Linux requires `secret-tool` and an unlocked desktop keyring; see [Linux setup](docs/linux.md).
