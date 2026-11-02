@@ -131,17 +131,17 @@ export function createFakeCompany({ name = 'shop', jwks, clientId, now, issuerPa
   };
 
   async function exchangeCode(request:Request, form:URLSearchParams) {
-    await company.verifyAssertion(form.get('client_assertion'), 'client');
+    const clientAssertion = await company.verifyAssertion(form.get('client_assertion'), 'client');
     const jkt = request.headers.has('dpop') ? await verifyProof(request) : '';
     const grant = company.codes.get(form.get('code'));
     if (!grant || grant.used || grant.sessionKey !== jkt) throw new Reject(400, 'invalid_grant');
     grant.used = true;
     if (form.get('redirect_uri') !== grant.redirectUri || sha256(form.get('code_verifier') ?? '') !== grant.challenge || form.get('resource') !== grant.resource) throw new Reject(400, 'invalid_grant');
-    return issueSignedIn(jkt, grant.account, grant.scopes, grant.resource);
+    return issueSignedIn(jkt, grant.account, grant.scopes, grant.resource, clientAssertion.iss);
   }
-  function issueSignedIn(jkt:string,account:string|undefined,scopes:string[],resource:string|null) {
+  function issueSignedIn(jkt:string,account:string|undefined,scopes:string[],resource:string|null,grantClient:string) {
     const refreshToken = `pat_${randomUUID()}`, accessToken = `tok_${randomUUID()}`;
-    company.grants.set(refreshToken, { family: refreshToken, sub:'', account, scopes, revoked: false, rotated: false });
+    company.grants.set(refreshToken, { family: refreshToken, sub:grantClient, account, scopes, revoked: false, rotated: false });
     company.tokens.set(accessToken, { jkt, sessionId:'', sub:'', account, scopes, resource, family: refreshToken, expires: now() + 3600_000, tokenType:jkt?'DPoP':'Bearer' });
     return json(200, { access_token: accessToken, token_type: jkt?'DPoP':'Bearer', expires_in: 3600, refresh_token: refreshToken, refresh_token_expires_in: 2592000, scope: scopes.join(' '), ...company.behavior.tokenOverride }, { 'cache-control': 'no-store' });
   }
@@ -193,17 +193,17 @@ export function createFakeCompany({ name = 'shop', jwks, clientId, now, issuerPa
     if (form.get('client_assertion_type') !== CLIENT_ASSERTION || (!company.clients.has(form.get('client_id')??'')||decodeJwt(expectValue(form.get('client_assertion'))).iss!==form.get('client_id'))) throw new Reject(400, 'invalid_request');
     if (form.get('grant_type') === 'authorization_code') return exchangeCode(request, form);
     if (form.get('grant_type') === 'urn:ietf:params:oauth:grant-type:device_code') {
-      await company.verifyAssertion(form.get('client_assertion'), 'client'); const jkt = request.headers.has('dpop') ? await verifyProof(request) : '';
+      const clientAssertion = await company.verifyAssertion(form.get('client_assertion'), 'client'); const jkt = request.headers.has('dpop') ? await verifyProof(request) : '';
       const device = company.devices.get(form.get('device_code'));
       if (!device || device.used) throw new Reject(400, 'invalid_grant');
       const behavior = company.signInBehavior;
       if (behavior.status !== 'approved') throw new Reject(400, behavior.status);
       device.used = true;
-      return issueSignedIn(jkt, behavior.account, behavior.scopes.filter(scope => device.scopes.includes(scope)), form.get('resource'));
+      return issueSignedIn(jkt, behavior.account, behavior.scopes.filter(scope => device.scopes.includes(scope)), form.get('resource'),clientAssertion.iss);
     }
     if (form.get('grant_type') === 'refresh_token') return refresh(request, form);
     if (form.get('grant_type') === 'https://personalagentprotocol.org/grant/mediated-sign-in') {
-      await company.verifyAssertion(form.get('client_assertion'),'client');
+      const clientAssertion = await company.verifyAssertion(form.get('client_assertion'),'client');
       const jkt=request.headers.has('dpop')?await verifyProof(request):'',behavior=company.signInBehavior,id=form.get('sign_in_id');
       let scopes:string[],resource:string|null;
       if(id){
@@ -219,7 +219,7 @@ export function createFakeCompany({ name = 'shop', jwks, clientId, now, issuerPa
         scopes=(form.get('scope')??'').split(' ');resource=form.get('resource');
         if(behavior.codeRequired){const id=randomUUID();company.challenges.set(id,{clientId:expectValue(form.get('client_id')),scopes,resource,expires:now()+60000});return json(400,{error:'code_required',sign_in_id:id,sent_to:'Your phone',expires_in:60});}
       }
-      return issueSignedIn(jkt,behavior.account,behavior.scopes.filter(scope=>scopes.includes(scope)),resource);
+      return issueSignedIn(jkt,behavior.account,behavior.scopes.filter(scope=>scopes.includes(scope)),resource,clientAssertion.iss);
     }
     throw new Reject(400,'unsupported_grant_type');
   }
@@ -272,13 +272,20 @@ export function createFakeCompany({ name = 'shop', jwks, clientId, now, issuerPa
       if (url.href === `https://${domain}/.well-known/oauth-protected-resource`) return json(200, { resource: `https://${domain}`, authorization_servers: [issuer] });
       if (url.pathname.startsWith('/.well-known/oauth-protected-resource')) return conversationResource ? json(200,{resource:conversationResource,authorization_servers:[issuer]}) : new Response(null,{status:404});
       if (url.href === `https://${domain}/.well-known/poppy.json`) return json(200, { protocol_version: '0.3', organization: { name, domain }, ...(method==='mediated'?{extensions:{'mediated-sign-in':{version:'1',scopes:directScopes,fields:[{name:'password',label:'Password',secret:true}]}}}:{}), auth: { issuer, scopes: Object.fromEntries(directScopes.map(scope => [scope, `Company permission ${scope}`])),  }, agent: { protocols: [{ type: 'other', endpoint: `https://api.${domain}/other` }, { type: 'poppy', endpoint, ...(conversationResource ? { resource: conversationResource } : {}) }] } });
-      if (url.href === `https://auth.${domain}/.well-known/oauth-authorization-server${issuerPath}`) return json(200, { issuer, token_endpoint: tokenEndpoint, revocation_endpoint: `${issuer}/revoke`, ...(method === 'direct' ? { authorization_endpoint: authorizationEndpoint } : {}), ...(method === 'device' ? { device_authorization_endpoint: `${issuer}/device` } : {}), protected_resources: [`https://${domain}`], dpop_signing_alg_values_supported:['ES256'],grant_types_supported: ['refresh_token',...(method==='mediated'?['https://personalagentprotocol.org/grant/mediated-sign-in']:[]), ...(method === 'direct' ? ['authorization_code'] : []), ...(method === 'device' ? ['urn:ietf:params:oauth:grant-type:device_code'] : [])], scopes_supported: directScopes });
+      if (url.href === `https://auth.${domain}/.well-known/oauth-authorization-server${issuerPath}`) return json(200, { issuer, token_endpoint: tokenEndpoint, revocation_endpoint: `${issuer}/revoke`, introspection_endpoint: `${issuer}/introspect`, ...(method === 'direct' ? { authorization_endpoint: authorizationEndpoint } : {}), ...(method === 'device' ? { device_authorization_endpoint: `${issuer}/device` } : {}), protected_resources: [`https://${domain}`], dpop_signing_alg_values_supported:['ES256'],grant_types_supported: ['refresh_token',...(method==='mediated'?['https://personalagentprotocol.org/grant/mediated-sign-in']:[]), ...(method === 'direct' ? ['authorization_code'] : []), ...(method === 'device' ? ['urn:ietf:params:oauth:grant-type:device_code'] : [])], scopes_supported: directScopes });
       if (url.href === `${issuer}/device`) {
         const form = new URLSearchParams(await request.text()); await company.verifyAssertion(form.get('client_assertion'), 'client');
         const code = randomUUID(); company.devices.set(code, { scopes: expectValue(form.get('scope')).split(' '), used: false });
         return json(200, { device_code: code, user_code: 'ABCD-EFGH', verification_uri: `${issuer}/approve`, expires_in: 600, interval: 5 });
       }
       if (url.href === tokenEndpoint && request.method === 'POST') return await token(request);
+      if (url.href === `${issuer}/introspect` && request.method === 'POST') {
+        const form = new URLSearchParams(await request.text());
+        const assertion = await company.verifyAssertion(form.get('client_assertion'), 'client');
+        const grant = company.grants.get(form.get('token'));
+        return json(200, grant && grant.sub===assertion.iss && !grant.revoked && !grant.rotated
+          ? {active:true,client_id:assertion.iss,sub:grant.account,scope:grant.scopes.join(' ')} : {active:false});
+      }
       if (url.href === `${issuer}/revoke` && request.method === 'POST') return await revoke(request);
       if (url.pathname==='/join/authorize' || url.origin === `https://api.${domain}`) return await resource(request);
       return json(404, { error: 'not_found' });
