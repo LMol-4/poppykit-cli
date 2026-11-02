@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased — remediation job 4
+
+- Display exact structured requested/proposed term comparisons with explicit limitations before trusted consent.
+
 ## Unreleased — remediation job 3
 
 Declare the directly imported jose harness dependency. Retry ordinary safe reads

@@ -4,7 +4,7 @@ import { ReadStream, WriteStream } from 'node:tty';
 import { createInterface } from 'node:readline/promises';
 import { join } from 'node:path';
 import { SqliteBusinessAttemptStore } from '@poppykit/client/sqlite';
-import { createOperationClient, createOperationSender, OperationClientError, AuthFailure, parseBusinessOperation } from '@poppykit/client';
+import { createOperationClient, createOperationSender, compareOperationTerms, OperationClientError, AuthFailure, parseBusinessOperation } from '@poppykit/client';
 import type { BusinessAttempt, BusinessOperation, BusinessClientContext, ClientAuth, EventPage, OperationDelivery, OperationRequest, TrustedOperationConsent } from '@poppykit/client';
 import type { Profile, State } from './state.js';
 import { companyContentGuard } from './company-content.js';
@@ -91,7 +91,7 @@ export function createBusinessController(options: {
   const conversationLock = (request: Extract<OperationRequest,{channel:'conversation'}>) => 'business-conversation:'+JSON.stringify([profile.id,options.connectionId,request.endpoint,request.conversationId]);
   const client = createOperationClient({
     store, context: () => {currentProfile();return auth.businessContext(options.connectionId);},
-    checkTerms: options.backend?.checkTerms ?? (async () => ['The CLI cannot verify arbitrary business semantics. Compare the complete original request, summary and structured terms shown here, including price, quantity and conditions.']),
+    checkTerms: options.backend?.checkTerms ?? (async (request, operation) => compareOperationTerms(request, operation)),
     consent: { async confirm(input) {
       const attempt = await client.get(input.attemptId);
       validateCompany(attempt);

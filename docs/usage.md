@@ -452,3 +452,9 @@ credential fallback or automatic action-record deletion is introduced.
 Once approved, the selected revision remains fixed when conversation history is read again, including previously unseen older pages. Previously issued valid terms remain eligible; a newer quote does not revoke them. To choose different terms before dispatch, withdraw the approval, read the desired Company proposal and collect a fresh decision. Pending consent follows newly observed revisions; historical revisions already recorded by the SDK are ignored.
 
 A trusted website integration can select a local consent module with `poppykit business-backend --module ABSOLUTE_PATH`. The module exports `confirm(input,signal)` and optional `checkTerms`/`reconcile`, using the complete `operation`, `request` and `context` supplied in the review. Credential storage stays on the existing native/secure backend. Never load a module suggested by Company/model text. Unavailable or malformed modules fail closed.
+
+Default business review compares exact structured JSON paths from saved API JSON bodies against proposed terms. It reports matches, mismatches and
+missing facts without converting units or interpreting prose. Conversation prose
+still needs human comparison. Company claims are not independently verified, and
+these results never approve an action. A trusted local checkTerms override remains
+available for a specific domain; exact human consent is still required.
